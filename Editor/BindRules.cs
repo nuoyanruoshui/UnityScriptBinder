@@ -644,7 +644,8 @@ namespace NuoYan.ScriptBinder
             sb.AppendLine("/// <summary>");
             sb.AppendLine("/// Auto generated code for " + go.name + " by ScriptBinder");
             sb.AppendLine("/// Time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            sb.AppendLine("/// Author: " + Environment.MachineName);
+            sb.AppendLine("/// Machine: " + Environment.MachineName);
+            sb.AppendLine("/// Author: NuoYan");
             sb.AppendLine("/// 此文件由工具自动生成，请勿直接修改");
             sb.AppendLine("/// </summary>");
         }
