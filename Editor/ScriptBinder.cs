@@ -158,7 +158,7 @@ namespace NuoYan.ScriptBinder
                 if (go != null)
                 {
                     //弹出编辑器提示
-                    bool bind = EditorUtility.DisplayDialog("ScriptBinder", "是否绑定脚本？\n注意：此工具会生成与当前所选【GameObject名字相同】的脚本文件，并自动挂载到选中的GameObject上\n若当前选中的GameObject同名脚本，则会【覆盖原有脚本】。", "确定", "取消");
+                    bool bind = EditorUtility.DisplayDialog("ScriptBinder", "是否绑定脚本？\n注意：此工具会生成与当前所选【GameObject名字相同】的脚本文件，并自动挂载到选中的GameObject上\n若当前选中的GameObject同名脚本，则会【覆盖原有脚本】\n具体规则可查看【Resources/ScriptBinder/BindRules.asset】", "确定", "取消");
                     if (bind)
                     {
                         BindRules.Instance.GenerateBindCode(go);
