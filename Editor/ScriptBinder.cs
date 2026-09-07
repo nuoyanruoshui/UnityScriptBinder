@@ -2,8 +2,10 @@
 using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEngine.Events;
 namespace NuoYan.ScriptBinder
 {
@@ -150,24 +152,252 @@ namespace NuoYan.ScriptBinder
         static void OnBindButtonClicked()
         {
             var selectedGameObjects = Selection.gameObjects;
-            if (selectedGameObjects.Length <= 0) return;
+            if (selectedGameObjects == null || selectedGameObjects.Length <= 0) return;
 
-            for (int i = 0; i < selectedGameObjects.Length; i++)
+            var targets = new List<GameObject>();
+            foreach (var go in selectedGameObjects)
             {
-                var go = selectedGameObjects[i];
                 if (go != null)
                 {
-                    //弹出编辑器提示
-                    bool bind = EditorUtility.DisplayDialog("ScriptBinder", "是否绑定脚本？\n注意：此工具会生成与当前所选【GameObject名字相同】的脚本文件，并自动挂载到选中的GameObject上\n若当前选中的GameObject同名脚本，则会【覆盖原有脚本】\n具体规则可查看【Resources/ScriptBinder/BindRules.asset】", "确定", "取消");
-                    if (bind)
+                    targets.Add(go);
+                }
+            }
+            if (targets.Count == 0) return;
+
+            // 弹窗：确认生成 + 填写自定义父类（留空则不继承自定义父类，默认继承 MonoBehaviour）
+            BindDialogWindow.ShowDialog(targets);
+        }
+    }
+
+    public class BindDialogWindow : EditorWindow
+    {
+        private List<GameObject> m_Targets;
+        private string m_BaseClass = string.Empty;
+        private Vector2 m_Scroll;
+        private readonly List<bool> m_TargetExpanded = new List<bool>();   // 每个目标的 Foldout 展开状态
+        private readonly List<Vector2> m_FieldScroll = new List<Vector2>(); // 每个目标的字段 ScrollView 滚动位置
+        private string m_ResolvedInput = string.Empty;   // 上次解析过的父类输入
+        private Type m_ResolvedBase;                     // 解析到的父类类型（找不到为 null）
+
+        public static void ShowDialog(List<GameObject> targets)
+        {
+            var win = CreateInstance<BindDialogWindow>();
+            win.m_Targets = targets;
+            win.titleContent = new GUIContent("ScriptBinder - 生成绑定脚本");
+            win.minSize = new Vector2(460f, 220f);
+            win.ShowModal();
+        }
+
+        private void OnGUI()
+        {
+            if (m_Targets == null || m_Targets.Count == 0)
+            {
+                Close();
+                return;
+            }
+
+            EditorGUILayout.HelpBox("将按选中 GameObject 的名字生成同名脚本，自动执行 4 步：\n① 代码生成 → ② 等待编译 → ③ 挂载组件 → ④ 填充引用\n注意：同名脚本会被【覆盖】！", MessageType.Warning);
+
+            EditorGUILayout.Space(8f);
+            m_BaseClass = EditorGUILayout.TextField("自定义父类（可选）", m_BaseClass);
+            DrawBaseClassHint();
+
+            EditorGUILayout.Space(8f);
+            DrawTargets();
+
+            GUILayout.FlexibleSpace();
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("取消", GUILayout.Width(90f)))
+                {
+                    Close();
+                }
+                if (GUILayout.Button("确定生成", GUILayout.Width(100f)))
+                {
+                    Confirm();
+                }
+            }
+        }
+
+        // 目标区：每个目标一个 Foldout（默认展开第一个），展开后在下方 ScrollView 中
+        // 列出该目标将要绑定的每一个字段（字段名 + 可见性 + 类型，与代码生成同规则）
+        private void DrawTargets()
+        {
+            while (m_TargetExpanded.Count < m_Targets.Count)
+            {
+                m_TargetExpanded.Add(m_TargetExpanded.Count == 0); // 默认只展开第一个目标
+                m_FieldScroll.Add(Vector2.zero);
+            }
+
+            var rules = BindRules.Instance;
+            m_Scroll = EditorGUILayout.BeginScrollView(m_Scroll);
+            for (int i = 0; i < m_Targets.Count; i++)
+            {
+                var go = m_Targets[i];
+                if (go == null)
+                {
+                    continue;
+                }
+                var children = rules != null ? rules.CollectBindChildren(go) : null;
+                int fieldCount = children != null ? children.Count : 0;
+
+                m_TargetExpanded[i] = EditorGUILayout.Foldout(
+                    m_TargetExpanded[i],
+                    string.Format("目标：{0}（{1} 个绑定字段）", go.name, fieldCount),
+                    true,
+                    EditorStyles.foldoutHeader);
+                if (!m_TargetExpanded[i])
+                {
+                    continue;
+                }
+
+                // 下方 ScrollView：显示该目标需要绑定的每一个字段
+                using (new EditorGUI.IndentLevelScope(1))
+                {
+                    float innerHeight = Mathf.Clamp(24f + fieldCount * 18f, 44f, 220f);
+                    m_FieldScroll[i] = EditorGUILayout.BeginScrollView(m_FieldScroll[i], GUILayout.Height(innerHeight));
+                    if (fieldCount == 0 || rules == null)
                     {
-                        BindRules.Instance.GenerateBindCode(go);
-                        // 代码写好并触发重编译后，等编译完成自动挂载组件并填入引用
-                        ScriptBinderBindHelper.RequestBind(go);
-                        Debug.Log($"{go.name}: Bind Script");
+                        EditorGUILayout.HelpBox("未发现可绑定字段：子物体命名需带可见性前缀（m_ / M_ / _），类型前缀见 BindRules 配置。", MessageType.Info);
+                    }
+                    else
+                    {
+                        foreach (var child in children)
+                        {
+                            string fieldName = rules.GetBindFieldName(child.name);
+                            string visible = rules.GetBindFieldVisible(child.name);
+                            string typeName = rules.GetBindFieldTypeName(child.name);
+                            EditorGUILayout.LabelField(fieldName, visible + " " + typeName);
+                        }
+                    }
+                    EditorGUILayout.EndScrollView();
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
+        // 根据输入实时反馈：留空默认 MonoBehaviour；填写则提示是否解析成功 / 是否可作为组件
+        private void DrawBaseClassHint()
+        {
+            if (string.IsNullOrWhiteSpace(m_BaseClass))
+            {
+                EditorGUILayout.HelpBox("留空：不继承自定义父类（默认继承 MonoBehaviour）", MessageType.Info);
+                return;
+            }
+            var entered = m_BaseClass.Trim();
+            if (entered != m_ResolvedInput)
+            {
+                m_ResolvedInput = entered;
+                m_ResolvedBase = ResolveBaseType(entered);
+            }
+
+            if (m_ResolvedBase == null)
+            {
+                EditorGUILayout.HelpBox(string.Format("未找到父类：{0}\n请填写完整类名（含命名空间），或确认该类已编译。", entered), MessageType.Error);
+                return;
+            }
+            if (!typeof(MonoBehaviour).IsAssignableFrom(m_ResolvedBase))
+            {
+                EditorGUILayout.HelpBox(string.Format("父类 {0}（{1}）不是 MonoBehaviour 派生类，无法作为组件挂载。", entered, m_ResolvedBase.FullName), MessageType.Error);
+                return;
+            }
+            var baseExpr = entered.IndexOf('.') >= 0 ? entered : m_ResolvedBase.Name;
+            var extraNs = GetExtraBaseNamespaceUsing(entered);
+            EditorGUILayout.HelpBox(string.Format("将生成：public partial class xxx : {0}{1}",
+                baseExpr, string.IsNullOrEmpty(extraNs) ? string.Empty : "\n自动补 using " + extraNs + ";"), MessageType.Info);
+        }
+
+        // 简单名父类且所在命名空间与生成文件（BindRules.Namespace）不一致时，需要追加的 using 命名空间；否则返回 null
+        private string GetExtraBaseNamespaceUsing(string entered)
+        {
+            if (m_ResolvedBase == null || string.IsNullOrEmpty(entered) || entered.IndexOf('.') >= 0)
+            {
+                return null;
+            }
+            var typeNs = m_ResolvedBase.Namespace;
+            if (string.IsNullOrEmpty(typeNs))
+            {
+                return null;
+            }
+            var fileNs = BindRules.Instance != null ? BindRules.Instance.Namespace : string.Empty;
+            return typeNs == fileNs ? null : typeNs;
+        }
+
+        // 尝试在已编译程序集中解析父类类型。
+        // 简单名会先按 BindRules.Namespace 拼接查找，再回退到全局；带点的按完整名查找。
+        private static Type ResolveBaseType(string baseClass)
+        {
+            var name = baseClass == null ? string.Empty : baseClass.Trim();
+            if (name.Length == 0)
+            {
+                return null;
+            }
+            var candidates = new List<string>();
+            if (name.IndexOf('.') >= 0)
+            {
+                candidates.Add(name);
+            }
+            else
+            {
+                var ns = BindRules.Instance != null ? BindRules.Instance.Namespace : string.Empty;
+                if (!string.IsNullOrEmpty(ns))
+                {
+                    candidates.Add(ns + "." + name);
+                }
+                candidates.Add(name);
+            }
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                foreach (var candidate in candidates)
+                {
+                    var type = asm.GetType(candidate);
+                    if (type != null)
+                    {
+                        return type;
                     }
                 }
             }
+            return null;
+        }
+
+        private void Confirm()
+        {
+            var entered = m_BaseClass == null ? string.Empty : m_BaseClass.Trim();
+            if (!string.IsNullOrEmpty(entered))
+            {
+                if (entered != m_ResolvedInput)
+                {
+                    m_ResolvedInput = entered;
+                    m_ResolvedBase = ResolveBaseType(entered);
+                }
+                if (m_ResolvedBase == null)
+                {
+                    EditorUtility.DisplayDialog("ScriptBinder", "找不到自定义父类：" + entered + "\n请填写完整类名（含命名空间），或确认该类已编译后再生成。", "知道了");
+                    return;
+                }
+                if (!typeof(MonoBehaviour).IsAssignableFrom(m_ResolvedBase))
+                {
+                    EditorUtility.DisplayDialog("ScriptBinder", "自定义父类 " + entered + "（" + m_ResolvedBase.FullName + "）必须继承自 MonoBehaviour，否则无法作为组件挂载。", "知道了");
+                    return;
+                }
+            }
+
+            var extraUsings = new List<string>();
+            var baseClass = "MonoBehaviour";
+            if (!string.IsNullOrEmpty(entered))
+            {
+                baseClass = entered.IndexOf('.') >= 0 ? entered : m_ResolvedBase.Name;
+                var extraNs = GetExtraBaseNamespaceUsing(entered);
+                if (!string.IsNullOrEmpty(extraNs))
+                {
+                    extraUsings.Add("using " + extraNs + ";");
+                }
+            }
+
+            // 完整四步管线：代码生成在 StartBind 内同步执行，编译/挂载/填充由管线自动推进
+            ScriptBinderBindHelper.StartBind(m_Targets, baseClass, extraUsings);
+            Close();
         }
     }
 }
