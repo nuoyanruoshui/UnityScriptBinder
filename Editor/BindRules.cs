@@ -11,20 +11,17 @@ using Sirenix.OdinInspector;
 #endif
 namespace NuoYan.ScriptBinder
 {
-    public enum BindType
+    /// <summary>
+    /// 绑定代码生成模式：
+    /// Reference = 引用赋值（[SerializeField]，编辑器自动填充，运行时零查找）；
+    /// Runtime = 运行时绑定（不序列化，生成 BindComponents() 由开发者手动调用，运行时按节点路径查找）；
+    /// Both = 两者兼有（序列化 + 编辑器填充优先，BindComponents() 仅对为 null 的字段运行时兜底）。
+    /// </summary>
+    public enum BindMode
     {
-        Text,
-        TMP_Text,
-        Image,
-        Button,
-        Toggle,
-        Slider,
-        Scrollbar,
-        Dropdown,
-        InputField,
-        RectTransform,
-        Transform,
-        GameObject,
+        Reference = 0,
+        Runtime = 1,
+        Both = 2,
     }
     public enum VisibleType
     {
@@ -76,6 +73,9 @@ namespace NuoYan.ScriptBinder
         [FolderPath]
 #endif
         public string SavePath = "Scripts/UI";
+
+        [Tooltip("默认绑定模式：Reference=引用赋值（SerializeField+编辑器填充）；Runtime=运行时绑定（BindComponents 手动调用）；Both=两者兼有（填充优先，运行时兜底）。生成弹窗内可临时切换")]
+        public BindMode DefaultMode = BindMode.Reference;
 
         public List<FieldVisibleRule> FieldVisibleRules = new List<FieldVisibleRule>()
     {
@@ -269,7 +269,8 @@ namespace NuoYan.ScriptBinder
         /// <param name="baseClass">自定义父类表达式（留空/空白默认 MonoBehaviour）</param>
         /// <param name="extraUsings">额外追加到生成文件头部的 using 行（如父类所在命名空间）</param>
         /// <param name="refresh">是否立即刷新资源（触发编译）。批量生成时传 false，由调用方统一刷新一次，避免触发多次编译</param>
-        public void GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true)
+        /// <param name="mode">绑定模式（Reference/Runtime/Both）；null 时取资产默认 BindRules.DefaultMode</param>
+        public void GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true, BindMode? mode = null)
         {
             if (go == null)
             {
@@ -285,6 +286,8 @@ namespace NuoYan.ScriptBinder
             {
                 baseClass = baseClass.Trim();
             }
+            // 绑定模式：调用方未指定时取资产默认
+            var bindMode = mode ?? DefaultMode;
 
             // 缩进层级：类所在层级 = 有无命名空间；字段比类多一级
             var classLevel = string.IsNullOrEmpty(ns) ? 0 : 1;
@@ -295,8 +298,19 @@ namespace NuoYan.ScriptBinder
             var fieldLines = new List<string>();
             foreach (Transform child in CollectBindChildren(go))
             {
-                fieldLines.Add(string.Format("[SerializeField] {0} {1} {2} = null;",
-                    GetFieldVisible(child.name), GetFieldType(child.name), GetBindFieldName(child.name)));
+                string visibility = GetFieldVisible(child.name);
+                string typeName = GetFieldType(child.name);
+                string fieldName = GetBindFieldName(child.name);
+                if (bindMode == BindMode.Runtime)
+                {
+                    // 运行时绑定：字段不序列化，由 BindComponents() 在运行时查找赋值
+                    fieldLines.Add(string.Format("{0} {1} {2};", visibility, typeName, fieldName));
+                }
+                else
+                {
+                    // 引用赋值 / 两者兼有：序列化字段，编辑器填充引用（Both 的运行时兜底见 BindComponents）
+                    fieldLines.Add(string.Format("[SerializeField] {0} {1} {2} = null;", visibility, typeName, fieldName));
+                }
             }
 
             // 生成主 partial 文件（字段声明）
@@ -328,6 +342,11 @@ namespace NuoYan.ScriptBinder
             {
                 gen.Append(bodyPad);
                 gen.AppendLine(line);
+            }
+            if (bindMode != BindMode.Reference)
+            {
+                // Runtime / Both：追加运行时查找绑定的 BindComponents()
+                AppendBindComponents(gen, go.transform, bindMode, classLevel);
             }
             gen.Append(classPad);
             gen.AppendLine("}");
@@ -368,6 +387,86 @@ namespace NuoYan.ScriptBinder
                 AssetDatabase.Refresh();
                 Debug.Log(string.Format("[ScriptBinder] 已生成绑定代码 <b>{0}</b>（等待编译后挂载/填引用）", className));
             }
+        }
+
+        // 生成 Runtime/Both 模式下的 BindComponents()：按节点相对路径在运行时查找并赋值
+        private void AppendBindComponents(StringBuilder gen, Transform root, BindMode bindMode, int classLevel)
+        {
+            var pad = Pad(classLevel + 1);
+            var bodyPad = Pad(classLevel + 2);
+
+            gen.AppendLine();
+            gen.Append(pad);
+            gen.AppendLine("/// <summary>");
+            gen.Append(pad);
+            if (bindMode == BindMode.Runtime)
+            {
+                gen.Append(pad);
+                gen.AppendLine("/// 运行时绑定：字段不序列化，运行时按节点路径查找组件并赋值。");
+            }
+            else
+            {
+                gen.Append(pad);
+                gen.AppendLine("/// 运行时兜底：编辑器已填充的引用保持不变，仅对为 null 的字段按节点路径查找（适配预制体实例等缺失引用场景）。");
+            }
+            gen.Append(pad);
+            gen.AppendLine("/// 请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。");
+            gen.Append(pad);
+            gen.AppendLine("/// </summary>");
+            gen.Append(pad);
+            gen.AppendLine("public void BindComponents()");
+            gen.Append(pad);
+            gen.AppendLine("{");
+            foreach (Transform child in CollectBindChildren(root.gameObject))
+            {
+                string fieldName = GetBindFieldName(child.name);
+                string lookup = BuildRuntimeLookup(child, root, GetFieldType(child.name));
+                gen.Append(bodyPad);
+                if (bindMode == BindMode.Both)
+                {
+                    gen.AppendLine(string.Format("if ({0} == null) {{ {0} = {1}; }}", fieldName, lookup));
+                }
+                else
+                {
+                    gen.AppendLine(string.Format("{0} = {1};", fieldName, lookup));
+                }
+            }
+            gen.Append(pad);
+            gen.AppendLine("}");
+        }
+
+        // 单条运行时查找表达式：按相对根节点的路径 transform.Find(...)
+        private string BuildRuntimeLookup(Transform child, Transform root, string fieldTypeName)
+        {
+            string path = BuildRelativePath(child, root);
+            if (fieldTypeName == nameof(BindType.GameObject))
+            {
+                return string.Format("transform.Find(\"{0}\")?.gameObject", path);
+            }
+            if (fieldTypeName == nameof(BindType.Transform))
+            {
+                return string.Format("transform.Find(\"{0}\")", path);
+            }
+            if (fieldTypeName == nameof(BindType.RectTransform))
+            {
+                return string.Format("transform.Find(\"{0}\") as RectTransform", path);
+            }
+            // 其余组件类型（Text/Image/Button/.../TMP_Text）：Find 后 GetComponent<T>
+            return string.Format("transform.Find(\"{0}\")?.GetComponent<{1}>()", path, fieldTypeName);
+        }
+
+        // 从 child 向上到 root（不含 root）拼接 '/' 相对路径
+        private string BuildRelativePath(Transform child, Transform root)
+        {
+            var names = new List<string>();
+            var t = child;
+            while (t != null && t != root)
+            {
+                names.Add(t.name);
+                t = t.parent;
+            }
+            names.Reverse();
+            return string.Join("/", names);
         }
 
         // 收集生成文件需要的 using（去重、固定顺序）

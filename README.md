@@ -1,8 +1,12 @@
 # UnityScriptBinder（com.unityscriptbinder.nuoyan）
 
-> 版本：1.0.0 ｜ Unity：2022.3+ ｜ 授权：MIT
+> 版本：1.1.0 ｜ Unity：2021.3+（在 2021.3.44 上验证）｜ 授权：MIT
 
-UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界面根节点一键生成与其 **GameObject 同名**的 `partial MonoBehaviour`，声明 UI 字段，并把每个字段在**编辑器内**直接填入对应子物体的组件引用，随场景 / 预制体一并保存——运行期零查找开销。
+UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界面根节点一键生成与其 **GameObject 同名**的 `partial MonoBehaviour`，声明 UI 字段并自动挂载组件。支持两种赋值风格、三种模式：
+
+- **引用赋值（Reference）**：字段以 `[SerializeField]` 声明，工具在**编辑器内**直接填入子物体组件引用，随场景 / 预制体保存——运行期零查找开销；
+- **运行时绑定（Runtime）**：字段不序列化，生成 `BindComponents()`，运行时按节点路径 `transform.Find(...)` 查找赋值；
+- **两者兼有（Both）**：编辑器填充优先，`BindComponents()` 仅对为 null 的字段运行时兜底。
 
 - 命名空间：`NuoYan.ScriptBinder`
 - 程序集定义：`NuoYan.ScriptBinder.asmdef`（Editor 专用）
@@ -13,9 +17,11 @@ UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界�
 ## 特性
 
 - **一键绑定（四步管线）**：选中 UI 根节点 → 点 Inspector 的 `Bind Script` → 自动依次执行 **① 代码生成 → ② 等待编译 → ③ 挂载组件 → ④ 填充引用**，全程有分步日志；失败只保留任务并提示，修正后自动继续（也提供分步菜单可手动补做任意一步）。
+- **三种绑定模式**：引用赋值 / 运行时绑定 / 两者兼有，弹窗内可切换并记住上次选择，项目级默认在 `BindRules` 资产里配置（详见"绑定模式"）。
+- **生成前预览**：弹窗内每个目标是一个 Foldout（默认展开第一个），展开后在 ScrollView 中列出将要绑定的每一个字段（字段名 + 可见性 + 类型），所见即所生成。
 - **partial + Logic 分离**：生成的字段声明文件（`xxx.cs`）每次重新生成、可覆盖；空的逻辑文件（`xxx.Logic.cs`）只在首次生成，之后**不会覆盖**，供开发者写自己的逻辑代码。
 - **命名即规则**：按子物体命名前缀决定“可见性 / 字段类型”，无需手动拖引用。
-- **编辑器内赋值**：引用在编辑期通过 `SerializedObject` 写入并随场景 / 预制体保存，Inspector 中可直接看到引用，方便把组件拖到 `Button.onClick` 等事件槽位。
+- **编辑器内赋值**：引用赋值 / 两者兼有模式下，引用在编辑期通过 `SerializedObject` 写入并随场景 / 预制体保存，Inspector 中可直接看到引用，方便把组件拖到 `Button.onClick` 等事件槽位。
 - **编译时序自动处理**：任务与当前步骤持久化在 `EditorPrefs`（域重载 / 编辑器重启都不丢失），只有确认“编译完成且域已重载”后才挂载，不会出现“代码已生成但类型还没编译就提前用旧类型挂载、新字段漏填”的问题；播放模式下暂停、退出播放后自动继续。
 
 ---
@@ -28,7 +34,7 @@ UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界�
 https://github.com/nuoyanruoshui/UnityScriptBinder.git
 ```
 
-方式二：直接把 `Assets/Plugins/UnityScriptBinder` 整个目录放入工程（如本工程即放在 `Assets/Plugins/` 下）。
+方式二：直接把 `Assets/Plugins/UnityScriptBinder` 整个目录放入工程。
 
 ### 依赖
 
@@ -84,12 +90,14 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 2. 在 Inspector 里点 **Bind Script** 按钮。
 3. 弹出生成窗口：
    - 提示同名脚本会被覆盖；
-   - **自定义父类**输入框：留空 = 不继承自定义父类（默认继承 `MonoBehaviour`）。填写**简单类名**即可（如 `MyPanelBase`）：工具会自动解析类型，与生成文件**同命名空间**时直接用简单名，**跨命名空间时自动在文件头补 `using <父类命名空间>;`**；也可以直接写带命名空间的全名（如 `GameLogic.MyPanelBase`）。注意该父类需自身继承自 `MonoBehaviour` 才能挂载为组件。输入时会**实时解析校验**：类不存在、或不是 `MonoBehaviour` 派生类会给出错误提示，"确定生成"也会被拦截。
+   - **绑定模式**下拉框：引用赋值 / 运行时绑定 / 两者兼有（默认取 `BindRules.DefaultMode`，选择会被记住）；
+   - **自定义父类**输入框：留空 = 不继承自定义父类（默认继承 `MonoBehaviour`）。填写**简单类名**即可（如 `MyPanelBase`）：工具会自动解析类型，与生成文件**同命名空间**时直接用简单名，**跨命名空间时自动在文件头补 `using <父类命名空间>;`**；也可以直接写带命名空间的全名（如 `GameLogic.MyPanelBase`）。注意该父类需自身继承自 `MonoBehaviour` 才能挂载为组件。输入时会**实时解析校验**：类不存在、或不是 `MonoBehaviour` 派生类会给出错误提示，"确定生成"也会被拦截；
+   - **目标预览**：每个选中目标是一个 Foldout（默认展开第一个），展开后列出该目标将要绑定的每个字段，可先确认命名规则是否正确再生成。
 4. 点 **确定生成**：工具开始四步管线——生成代码 → 等待 Unity 编译 → **编译完成后**把同名组件挂到该节点 → 填好全部字段引用。Console 会按 `[1/4 代码生成] / [2/4 编译] / [3/4 挂载] / [4/4 组件绑定]` 分步打印；若某一步失败（如编译报错、目标场景未打开），任务会保留并给出提示，修正后自动继续。
 
 > 生成的脚本会以 `类名 = GameObject 名` 写入 `Assets/{BindRules.SavePath}/`（默认 `Scripts/UI`），并自动放进 `BindRules.Namespace`（默认 `GameLogic`）。
 
-**分步手动菜单**（`ScriptBinder/` 菜单栏，与自动管线共用同一套实现，供失败后补救）：
+**分步手动菜单**（`Tools/NuoYan/ScriptBinder/` 菜单栏，与自动管线共用同一套实现，供失败后补救）：
 
 | 菜单 | 作用 |
 |------|------|
@@ -98,6 +106,64 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 | `步骤 3：挂载组件（选中，需已编译）` | 只把同名组件挂到选中的节点 |
 | `步骤 4：重新填充引用（选中）` | 只重填字段引用（不重新生成）|
 | `查看待处理任务` / `清除待处理任务` | 查看 / 清空排队中的绑定任务 |
+
+### 绑定模式（引用赋值 / 运行时绑定 / 两者兼有）
+
+不同开发者习惯不同：有人喜欢 `[SerializeField]` 在编辑器里拖好/自动填好引用；有人喜欢在代码里运行时查找（如 `transform.Find("xxx").GetComponent<Image>()`）。生成弹窗里的 **绑定模式** 下拉框支持三种：
+
+| 模式 | 生成代码 | 编辑器填充 |
+|------|----------|-----------|
+| 引用赋值（Reference） | `[SerializeField] private X m_Xxx = null;` | 自动填充（运行时零查找开销） |
+| 运行时绑定（Runtime） | `private X m_Xxx;` ＋ `public void BindComponents()`（按节点路径 `transform.Find("A/B")?.GetComponent<T>()` 逐字段查找赋值） | 跳过（字段不序列化，Inspector 不显示） |
+| 两者兼有（Both） | `[SerializeField] private X m_Xxx = null;` ＋ `BindComponents()`（每行 `if (m_Xxx == null) { ... }`，编辑器已赋值的引用优先，仅对缺失引用运行时兜底） | 自动填充 ＋ 运行时兜底 |
+
+- 项目默认模式配置在 `BindRules` 资产（`DefaultMode`）；弹窗内的选择会被记住（EditorPrefs），下次沿用。
+- `BindComponents()` 需要开发者在生命周期中调用一次（如 `Awake` / `OnEnable` / `OnInit(userData)`）。工具**不自动生成 Awake**，避免与开发者自己的生命周期冲突。
+- 运行时查找路径 = 字段子物体相对根节点的层级路径，与编辑器填充共用同一套递归收集规则，字段与路径一一对应。
+
+运行时绑定 / 两者兼有模式生成的文件形态（`HeroPanel` 为例）：
+
+```csharp
+// HeroPanel.cs —— 由工具自动生成（运行时绑定模式）
+using UnityEngine;
+using TMPro;
+
+namespace GameLogic
+{
+    public partial class HeroPanel : MonoBehaviour
+    {
+        private TMP_Text m_TmpName;          // 不序列化，Inspector 不显示
+        private Button m_BtnClose;
+
+        /// <summary>
+        /// 运行时绑定：字段不序列化，运行时按节点路径查找组件并赋值。
+        /// 请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。
+        /// </summary>
+        public void BindComponents()
+        {
+            m_TmpName = transform.Find("m_tmpName")?.GetComponent<TMP_Text>();
+            m_BtnClose = transform.Find("m_btnClose")?.GetComponent<Button>();
+        }
+    }
+}
+```
+
+```csharp
+// HeroPanel.Logic.cs —— 开发者逻辑文件
+namespace GameLogic
+{
+    public partial class HeroPanel
+    {
+        private void Awake()
+        {
+            BindComponents(); // 或放到 OnInit/OnEnable 等你的生命周期里
+            // 之后即可访问 m_TmpName / m_BtnClose ...
+        }
+    }
+}
+```
+
+> 两者的 `BindComponents()` 中每行形如 `if (m_BtnClose == null) { m_BtnClose = ...; }`——编辑器已填充的引用保持不变，仅对缺失引用运行时兜底。
 
 ### 3. 写逻辑
 
@@ -136,6 +202,8 @@ namespace GameLogic
 
 在 `.Logic.cs` 里写自己的方法，通过 `partial` 与自动生成的字段声明合并。
 
+> 上例为默认的**引用赋值**模式；运行时绑定 / 两者兼有的完整文件形态见上方"绑定模式"一节（含 `BindComponents()` 示例）。
+
 ---
 
 ## 规则配置
@@ -143,7 +211,6 @@ namespace GameLogic
 规则存在 **ScriptableObject** `BindRules.asset` 中。
 
 - 首次执行绑定时会**自动创建**于工程 `Assets/Resources/ScriptBinder/BindRules.asset`。
-- 也可手动创建：右键 → `Create → ScriptBinder/BindRules` 后放入该路径。
 
 配置项：
 
@@ -151,6 +218,7 @@ namespace GameLogic
 |------|------|
 | `Namespace` | 生成代码的命名空间（默认 `GameLogic`）|
 | `SavePath`  | 生成脚本目录，相对 `Assets/`（默认 `Scripts/UI`；有 Odin 时显示文件夹选择器）|
+| `DefaultMode` | 默认绑定模式：`Reference` 引用赋值 / `Runtime` 运行时绑定 / `Both` 两者兼有（生成弹窗内可临时切换并记住）|
 | `FieldVisibleRules` | 可见性前缀表：`Prefix` + `Visible(Private/Protected/Public)` |
 | `Rules` | 类型前缀表：`Prefix` + `Type(BindType)` |
 
@@ -167,20 +235,22 @@ ScriptBinder/
 ├── Editor/
 │   ├── NuoYan.ScriptBinder.asmdef
 │   ├── BindRules.cs             # 规则资产 + 代码生成逻辑
-│   ├── ScriptBinder.cs          # Inspector “Bind Script” 按钮（[InitializeOnLoad]）
+│   ├── ScriptBinder.cs          # Inspector “Bind Script” 按钮 + 生成对话框（模式 / 父类 / 字段预览）
 │   └── ScriptBinderBindHelper.cs# 四步绑定管线状态机（生成→编译→挂载→填充）＋分步菜单
 ```
 
 实现要点：
 
-- `BindRules.GenerateBindCode(go, baseClass, extraUsings, refresh)`：**递归扫描全部后代**，生成 `.cs` 与 `.Logic.cs`；`refresh=false` 时只写文件不刷新，由管线整批统一 `AssetDatabase.Refresh()`（一次编译）。
-- `ScriptBinderBindHelper.StartBind(targets, baseClass, extraUsings)`：管线入口。任务（目标定位信息 + 当前步骤）持久化在 `EditorPrefs`，由 `[InitializeOnLoad]` + `[DidReloadScripts]` 驱动 `Flush` 状态机推进：**确认编译完成（域已重载）后才**用 `MonoScript.GetClass()` 拿新类型 → `Undo.AddComponent` 挂到目标 → `SerializedObject` 填字段 → 保存。场景对象按实例 ID 快照定位（域重载后仍有效）；预制体优先定位到已打开的 Prefab Stage，未打开时自动用 `LoadPrefabContents` 写回 `.prefab` 资产（变体除外，需进 Stage）。
-- `ScriptBinder`：向 Inspector 注入按钮，并只在选中了含 `RectTransform` 的物体时显示。
+- `BindRules.GenerateBindCode(go, baseClass, extraUsings, refresh, mode)`：**递归扫描全部后代**，按绑定模式生成 `.cs`（字段声明 ＋ Runtime/Both 时的 `BindComponents()`）与 `.Logic.cs`；`refresh=false` 时只写文件不刷新，由管线整批统一 `AssetDatabase.Refresh()`（一次编译）。`BindComponents()` 的查找路径由 `BuildRelativePath` 计算，类型映射见 `BuildRuntimeLookup`。
+- `ScriptBinderBindHelper.StartBind(targets, baseClass, extraUsings, mode)`：管线入口。任务（目标定位信息 + 绑定模式 + 当前步骤）持久化在 `EditorPrefs`，由 `[InitializeOnLoad]` + `[DidReloadScripts]` 驱动 `Flush` 状态机推进：**确认编译完成（域已重载）后才**用 `MonoScript.GetClass()` 拿新类型 → `Undo.AddComponent` 挂到目标 → 非 Runtime 模式用 `SerializedObject` 填字段 → 保存。场景对象按实例 ID 快照定位（域重载后仍有效）；预制体优先定位到已打开的 Prefab Stage，未打开时自动用 `LoadPrefabContents` 写回 `.prefab` 资产（变体除外，需进 Stage）。
+- `ScriptBinder`：向 Inspector 注入按钮（仅在选中含 `RectTransform` 的物体时显示），`BindDialogWindow` 提供绑定模式 / 自定义父类选择与目标字段预览。
 
 ---
 
 ## 注意事项 / 限制
 
+- **绑定模式切换**：用另一模式重新点 Bind Script 即可整体切换——`Runtime → Reference/Both` 会重新生成 `[SerializeField]` 字段并自动填充；`Reference → Runtime` 后字段不再序列化，Inspector 中看不到引用属正常现象（由 `BindComponents()` 运行时赋值）。
+- **运行时查找依赖子物体命名/层级**：`BindComponents()` 的查找路径在生成时固化。若之后改动了子物体名字或层级结构，需要重新点一次 Bind Script 刷新路径；查找失败只会留下 null 字段（Runtime 模式）或由编辑器引用兜底（Both 模式），不会抛异常。
 - **同名覆盖**：`xxx.cs`（字段声明文件）每次绑定都会覆盖。若目标节点已有一个同名但**非工具生成**的脚本，会被覆盖，请先确认。
 - **类名 = GameObject 名**：节点名称需要是合法 C# 标识符（无空格 / 特殊字符）。
 - **递归所有后代，容器即边界**：工具会遍历目标节点下所有层级的后代；但命中 `rect` / `go` 类型前缀（如 `m_rectPanel`、`M_goList`）的节点会被当作**容器边界**——自身生成字段后不再深入其子节点（子节点应由该容器作为新的根另行绑定）。若不同层级出现**同名**绑定物体，只保留先序最早遍历到的一个（同名其余会被忽略并打印警告），以避免生成重复字段。

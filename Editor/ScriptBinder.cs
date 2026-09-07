@@ -171,11 +171,19 @@ namespace NuoYan.ScriptBinder
 
     public class BindDialogWindow : EditorWindow
     {
+        private const string BindModePrefsKey = "ScriptBinder.BindMode"; // 记住上次选择的绑定模式
+        private static readonly string[] BindModeLabels =
+        {
+            "引用赋值（SerializeField，编辑器填充）",
+            "运行时绑定（BindComponents 手动调用）",
+            "两者兼有（编辑器填充 + 运行时兜底）",
+        };
         private List<GameObject> m_Targets;
         private string m_BaseClass = string.Empty;
         private Vector2 m_Scroll;
         private readonly List<bool> m_TargetExpanded = new List<bool>();   // 每个目标的 Foldout 展开状态
         private readonly List<Vector2> m_FieldScroll = new List<Vector2>(); // 每个目标的字段 ScrollView 滚动位置
+        private BindMode m_BindMode = BindMode.Reference;
         private string m_ResolvedInput = string.Empty;   // 上次解析过的父类输入
         private Type m_ResolvedBase;                     // 解析到的父类类型（找不到为 null）
 
@@ -183,6 +191,17 @@ namespace NuoYan.ScriptBinder
         {
             var win = CreateInstance<BindDialogWindow>();
             win.m_Targets = targets;
+            // 绑定模式：记住上次选择；从未选过则取 BindRules 资产默认
+            if (EditorPrefs.HasKey(BindModePrefsKey))
+            {
+                int saved = EditorPrefs.GetInt(BindModePrefsKey, 0);
+                win.m_BindMode = (BindMode)Mathf.Clamp(saved, 0, BindModeLabels.Length - 1);
+            }
+            else
+            {
+                var rules = BindRules.Instance;
+                win.m_BindMode = rules != null ? rules.DefaultMode : BindMode.Reference;
+            }
             win.titleContent = new GUIContent("ScriptBinder - 生成绑定脚本");
             win.minSize = new Vector2(460f, 220f);
             win.ShowModal();
@@ -201,6 +220,15 @@ namespace NuoYan.ScriptBinder
             EditorGUILayout.Space(8f);
             m_BaseClass = EditorGUILayout.TextField("自定义父类（可选）", m_BaseClass);
             DrawBaseClassHint();
+
+            EditorGUILayout.Space(6f);
+            int modeIndex = EditorGUILayout.Popup("绑定模式", (int)m_BindMode, BindModeLabels);
+            if (modeIndex != (int)m_BindMode)
+            {
+                m_BindMode = (BindMode)modeIndex;
+                EditorPrefs.SetInt(BindModePrefsKey, modeIndex); // 记住选择，下次弹窗沿用
+            }
+            EditorGUILayout.HelpBox(GetBindModeHint(m_BindMode), MessageType.Info);
 
             EditorGUILayout.Space(8f);
             DrawTargets();
@@ -275,6 +303,20 @@ namespace NuoYan.ScriptBinder
                 }
             }
             EditorGUILayout.EndScrollView();
+        }
+
+        // 各绑定模式的说明（弹窗内展示）
+        private static string GetBindModeHint(BindMode mode)
+        {
+            switch (mode)
+            {
+                case BindMode.Runtime:
+                    return "字段不序列化，生成 BindComponents() 运行时查找方法。\n请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。";
+                case BindMode.Both:
+                    return "字段序列化并编辑器填充；同时生成 BindComponents()，仅对为 null 的字段运行时查找（编辑器引用优先，实例缺失引用时兜底）。\n需要时在生命周期中调用一次 BindComponents()。";
+                default:
+                    return "字段以 [SerializeField] 声明，生成后由工具在编辑器内自动填充引用（运行时零查找开销）。";
+            }
         }
 
         // 根据输入实时反馈：留空默认 MonoBehaviour；填写则提示是否解析成功 / 是否可作为组件
@@ -396,7 +438,7 @@ namespace NuoYan.ScriptBinder
             }
 
             // 完整四步管线：代码生成在 StartBind 内同步执行，编译/挂载/填充由管线自动推进
-            ScriptBinderBindHelper.StartBind(m_Targets, baseClass, extraUsings);
+            ScriptBinderBindHelper.StartBind(m_Targets, baseClass, extraUsings, m_BindMode);
             Close();
         }
     }

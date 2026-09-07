@@ -1,9 +1,9 @@
 {
   "name": "com.unityscriptbinder.nuoyan",
   "displayName": "UnityScriptBinder",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "unity": "2021.3",
-  "description": "UnityScriptBinder 是一个用于 Unity 的脚本绑定工具，旨在简化 UI 组件与脚本之间的绑定过程。它提供了自动生成绑定代码的功能，使开发者能够更高效地管理 UI 元素和逻辑代码之间的关系。",
+  "description": "UnityScriptBinder 是一个用于 Unity 的脚本绑定工具，旨在简化 UI 组件与脚本之间的绑定过程。它提供了自动生成绑定代码的功能，使开发者能够更高效地管理 UI 元素和逻辑代码之间的关系。支持引用赋值（编辑器填充）、运行时绑定（BindComponents 运行时查找）与两者兼有三种模式。",
   "license": "MIT",
   "author": {
     "name": "NuoYan"

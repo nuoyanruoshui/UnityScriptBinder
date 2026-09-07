@@ -40,6 +40,7 @@ namespace NuoYan.ScriptBinder
             public string assetPath;   // kind=1：.prefab 资产路径
             public string hierarchy;   // '/' 拼接的相对层级路径（相对场景根 / Stage 根 / 预制体根）
             public int instanceId;     // 请求时捕获的场景对象实例 ID（域重载后仍有效）
+            public int mode;           // BindMode：0=引用赋值 1=运行时绑定 2=两者兼有
             public int stage;          // BindStage
             [NonSerialized] public GameObject live; // 运行时已解析目标（不持久化）
         }
@@ -138,7 +139,8 @@ namespace NuoYan.ScriptBinder
         /// <param name="targets">选中的 GameObject（场景对象 / Prefab Stage 对象 / Project 窗口预制体资产）</param>
         /// <param name="baseClass">自定义父类表达式，如 "MonoBehaviour"、"CardGame.UGuiForm"</param>
         /// <param name="extraUsings">额外 using 行（如父类所在命名空间）</param>
-        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null)
+        /// <param name="mode">绑定模式；null 时取 BindRules.DefaultMode</param>
+        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null, BindMode? mode = null)
         {
             if (targets == null || targets.Count == 0)
             {
@@ -151,6 +153,7 @@ namespace NuoYan.ScriptBinder
                 Debug.LogError("[ScriptBinder] 找不到 BindRules 配置，无法生成绑定代码。");
                 return;
             }
+            BindMode bindMode = mode ?? rules.DefaultMode;
             string genDir = rules.SavePath == null ? string.Empty : rules.SavePath;
 
             // Prefab Stage 有未保存修改时提醒：编译期间若 Stage 被关闭，自动挂载将基于已保存的
@@ -202,20 +205,21 @@ namespace NuoYan.ScriptBinder
                 }
 
                 var task = Capture(go, genDir);
+                task.mode = (int)bindMode;
 
                 // —— 步骤 1/4：代码生成（先比对内容，无变化时不触发重编译）——
                 string rel = RelScriptPath(task);
                 string abs = Path.Combine(Application.dataPath, rel.Substring("Assets/".Length).Replace('/', Path.DirectorySeparatorChar));
                 string oldText = File.Exists(abs) ? File.ReadAllText(abs) : null;
-                rules.GenerateBindCode(go, baseClass, extraUsings, false);
+                rules.GenerateBindCode(go, baseClass, extraUsings, false, bindMode);
                 string newText = File.Exists(abs) ? File.ReadAllText(abs) : null;
                 bool changed = oldText != newText;
                 anyChanged |= changed;
                 anyGenerated = true;
 
                 int fieldCount = rules.CollectBindChildren(go).Count;
-                Debug.Log(string.Format("[ScriptBinder] [1/4 代码生成] <b>{0}</b>：{1} 个绑定字段 → {2}{3}",
-                    name, fieldCount, rel, changed ? string.Empty : "（内容未变化，无需重新编译）"));
+                Debug.Log(string.Format("[ScriptBinder] [1/4 代码生成] <b>{0}</b>：{1} 个绑定字段（{2}）→ {3}{4}",
+                    name, fieldCount, BindModeLabel(bindMode), rel, changed ? string.Empty : "（内容未变化，无需重新编译）"));
                 created.Add(task);
             }
             if (!anyGenerated)
@@ -240,7 +244,7 @@ namespace NuoYan.ScriptBinder
             AssetDatabase.Refresh(); // 整批只触发一次编译
             m_Tick = 0;
             m_GateLogged = false;
-            Debug.Log("[ScriptBinder] [2/4 等待编译] 已登记 " + created.Count + " 个任务，编译完成后自动挂载组件并填充引用。");
+            Debug.Log("[ScriptBinder] [2/4 等待编译] 已登记 " + created.Count + " 个任务（" + BindModeLabel(bindMode) + "），编译完成后自动挂载组件并填充引用。");
             EditorApplication.delayCall += Flush;
         }
 
@@ -532,7 +536,18 @@ namespace NuoYan.ScriptBinder
 
             var rules = BindRules.Instance;
             int total = rules != null ? rules.CollectBindChildren(go).Count : 0;
-            int filled = BindFields(go, comp);
+            string modeNote = string.Empty;
+            int filled;
+            if (t.mode == (int)BindMode.Runtime)
+            {
+                // 运行时绑定模式：字段不序列化，无需编辑器填充（由生成的 BindComponents() 在运行时赋值）
+                filled = 0;
+                modeNote = "（运行时绑定模式：无需编辑器填充）";
+            }
+            else
+            {
+                filled = BindFields(go, comp);
+            }
 
             if (m_ContentsRoot != null)
             {
@@ -551,7 +566,7 @@ namespace NuoYan.ScriptBinder
                 }
             }
             t.live = null;
-            Debug.Log(string.Format("[ScriptBinder] [4/4 组件绑定] <b>{0}</b> 字段填充 {1}/{2}", go.name, filled, total));
+            Debug.Log(string.Format("[ScriptBinder] [4/4 组件绑定] <b>{0}</b> 字段填充 {1}/{2}{3}", go.name, filled, total, modeNote));
             return true;
         }
 
@@ -1066,6 +1081,16 @@ namespace NuoYan.ScriptBinder
             EditorPrefs.DeleteKey(FilesChangedKey);
             EditorUtility.ClearProgressBar();
             Debug.Log("[ScriptBinder] 已清除全部待处理任务。");
+        }
+
+        private static string BindModeLabel(BindMode mode)
+        {
+            switch (mode)
+            {
+                case BindMode.Runtime: return "运行时绑定";
+                case BindMode.Both: return "两者兼有";
+                default: return "引用赋值";
+            }
         }
 
         private static string StageName(int stage)
