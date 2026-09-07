@@ -25,7 +25,7 @@ UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界�
 方式一：作为 **UPM git 包**（Package Manager → `+` → Add package from git URL）：
 
 ```
-https://github.com/NuoYanRuoShui/UnityScriptBinder.git
+https://github.com/nuoyanruoshui/UnityScriptBinder.git
 ```
 
 方式二：直接把 `Assets/Plugins/ScriptBinder` 整个目录放入工程（如本工程即放在 `Assets/Plugins/` 下）。
