@@ -55,10 +55,30 @@ public static class ScriptBinder
 
         var hasButton = m_bindButtonsByWindow.ContainsKey(window);
 
-        if (!hasButton)
+        if (!hasButton && ShouldShowBindButton())
         {
             CreateButton(window);
             OnCreateButton?.Invoke(window);
+        }
+        else if (hasButton && !ShouldShowBindButton())
+        {
+            DestroyButton(window);
+            OnDestroyButton?.Invoke(window);
+        }
+    }
+
+    static bool ShouldShowBindButton()
+    {
+        var selectedGameObjects = Selection.gameObjects;
+        return selectedGameObjects.Length > 0 &&
+               selectedGameObjects.All(go => go != null && go.TryGetComponent<RectTransform>(out _));
+    }
+    static void DestroyButton(EditorWindow window)
+    {
+        if (m_bindButtonsByWindow.TryGetValue(window, out var buttonHolder))
+        {
+            buttonHolder.RemoveFromHierarchy();
+            m_bindButtonsByWindow.Remove(window);
         }
     }
 
@@ -135,10 +155,15 @@ public static class ScriptBinder
             var go = selectedGameObjects[i];
             if (go != null)
             {
-                BindRules.Instance.GenerateBindCode(go);
-                // 代码写好并触发重编译后，等编译完成自动挂载组件并填入引用
-                ScriptBinderBindHelper.RequestBind(go);
-                Debug.Log($"{go.name}: Bind Script");
+                //弹出编辑器提示
+                bool bind = EditorUtility.DisplayDialog("ScriptBinder", "是否绑定脚本？\n注意：此工具会生成与当前所选【GameObject名字相同】的脚本文件，并自动挂载到选中的GameObject上\n若当前选中的GameObject同名脚本，则会【覆盖原有脚本】。", "确定", "取消");
+                if (bind)
+                {
+                    BindRules.Instance.GenerateBindCode(go);
+                    // 代码写好并触发重编译后，等编译完成自动挂载组件并填入引用
+                    ScriptBinderBindHelper.RequestBind(go);
+                    Debug.Log($"{go.name}: Bind Script");
+                }
             }
         }
     }
