@@ -45,7 +45,7 @@ namespace NuoYan.ScriptBinder
         public VisibleType Visible;
     }
 
-    [CreateAssetMenu(fileName = "BindRules", menuName = "ScriptBinder/BindRules")]
+    // [CreateAssetMenu(fileName = "BindRules", menuName = "ScriptBinder/BindRules")]
     public class BindRules : ScriptableObject
     {
         private static BindRules m_Instance;
