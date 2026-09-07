@@ -756,44 +756,49 @@ namespace NuoYan.ScriptBinder
             return filled;
         }
 
-        // 由字段类型找子物体上真实对应的组件
+        // 由字段类型表达式找子物体上真实对应的组件：
+        // 优先把表达式解析为真实类型后按“可赋值”匹配——支持自定义组件，且 TMP_Text 等基类
+        // 能自动承接 TextMeshProUGUI 等派生组件；解析不到时退化为按类型名（短名/全名）比对。
         private static UnityEngine.Object ResolveBindValue(GameObject child, string fieldTypeName)
         {
-            if (fieldTypeName == nameof(BindType.GameObject))
+            if (string.IsNullOrWhiteSpace(fieldTypeName))
             {
-                return child;
+                return null;
             }
-            if (fieldTypeName == nameof(BindType.Transform))
+            var type = BindRules.ResolveRuleType(fieldTypeName);
+            if (type != null)
             {
-                return child.transform;
+                if (type == typeof(GameObject))
+                {
+                    return child;
+                }
+                foreach (var comp in child.GetComponents<Component>())
+                {
+                    if (comp == null)
+                    {
+                        continue;
+                    }
+                    if (type.IsAssignableFrom(comp.GetType()))
+                    {
+                        return comp;
+                    }
+                }
+                return null;
             }
-
-            var realNames = GetRealComponentNames(fieldTypeName);
+            // 解析失败（如类型尚未编译）：按名字兜底比对
             foreach (var comp in child.GetComponents<Component>())
             {
                 if (comp == null)
                 {
                     continue;
                 }
-                foreach (var realName in realNames)
+                var compType = comp.GetType();
+                if (compType.Name == fieldTypeName || compType.FullName == fieldTypeName)
                 {
-                    if (comp.GetType().Name == realName)
-                    {
-                        return comp;
-                    }
+                    return comp;
                 }
             }
             return null;
-        }
-
-        // 枚举名 -> 真实组件类型名。BindType.TMP_Text 对应 TMP 的 TextMeshProUGUI / TextMeshPro
-        private static IEnumerable<string> GetRealComponentNames(string fieldTypeName)
-        {
-            if (fieldTypeName == nameof(BindType.TMP_Text))
-            {
-                return new[] { "TextMeshProUGUI", "TextMeshPro" };
-            }
-            return new[] { fieldTypeName };
         }
 
         // =====================================================================

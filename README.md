@@ -40,7 +40,7 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 
 - UGUI（`UnityEngine.UI`）
 - TextMeshPro（`TMPro`，生成 `tmp` 前缀字段时用到）
-- 可选：**Odin Inspector**（宏 `ODIN_INSPECTOR`）——存在时 `SavePath` 会用文件夹选择器
+- 可选：**Odin Inspector**（宏 `ODIN_INSPECTOR`）——存在时：`SavePath` 用文件夹选择器；`Rules` 里的 `Type` 提供下拉候选（数据源见下方 `BindTypes`）
 
 ---
 
@@ -75,10 +75,14 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 | `trans`| `Transform` | |
 | `go`  | `GameObject` | 绑定整个子物体 |
 
-> 例：子物体命名为 `m_img`（`m_` → `private`，`img` → `Image`），会生成：
+> 例：子物体命名为 `m_img`（`m_` → `private`，`img` 前缀命中默认规则 → `UnityEngine.UI.Image`），会生成：
 > ```csharp
-> [SerializeField] private Image m_Img = null;
+> [SerializeField] private UnityEngine.UI.Image m_Img = null;
 > ```
+
+**类型前缀可自由扩展（无需改包代码）**：`BindRule.Type` 是字符串，填任意 C# 组件类型表达式即可——内置规则用全限定名（如 `UnityEngine.UI.Button`），自定义组件直接写完整类型名（如 `MyGame.MyComponent`），生成的代码按原文输出。简单名（如 `Button`、`TMP_Text`）也支持：工具会把类型解析成真实 `Type`，按解析出的命名空间自动补 `using`。通过 UPM 安装时枚举无法扩展，字符串规则正好解决该问题：只需在工程内的 `BindRules` 资产里增删/修改规则行，无需改动包内代码（`BindType.cs` 里的枚举仅作内置类型参考，已不参与匹配）。
+
+**类型目录（`BindTypes`）**：`BindRules` 资产上的一个类型清单，内置 12 个常用 UI 类型。安装了 Odin 时，编辑 `Rules` 的 `Type` 会弹出下拉，候选即来自该目录——把自定义组件全名追加到 `BindTypes`，就能在 `Type` 下拉里直接选用（`Type` 本身仍可手填任意表达式，不依赖目录）。
 
 **字段命名会自动驼峰（帕斯卡）化**：保留可见性前缀 `m_` / `M_` / `_`，把其后内容按单词（`_` 或大小写转折处切分）逐词首字母大写。例：`m_imgIcon` → `m_ImgIcon`、`m_img_icon` → `m_ImgIcon`、`m_btnClose` → `m_BtnClose`。子物体名不变，只影响生成的字段标识符。
 
@@ -219,8 +223,9 @@ namespace GameLogic
 | `Namespace` | 生成代码的命名空间（默认 `GameLogic`）|
 | `SavePath`  | 生成脚本目录，相对 `Assets/`（默认 `Scripts/UI`；有 Odin 时显示文件夹选择器）|
 | `DefaultMode` | 默认绑定模式：`Reference` 引用赋值 / `Runtime` 运行时绑定 / `Both` 两者兼有（生成弹窗内可临时切换并记住）|
+| `BindTypes` | 类型目录：编辑 `Rules.Type` 时的下拉候选（**需 Odin**）。内置 12 个常用类型；自定义组件把全名加进来即可下拉选用（`Type` 手填不依赖此目录）|
 | `FieldVisibleRules` | 可见性前缀表：`Prefix` + `Visible(Private/Protected/Public)` |
-| `Rules` | 类型前缀表：`Prefix` + `Type(BindType)` |
+| `Rules` | 类型前缀表：`Prefix` + `Type`（**任意 C# 组件类型表达式**，建议全限定名如 `UnityEngine.UI.Button`；简单名会自动补 using。可自由增删以支持自定义组件，无需改包代码）|
 
 修改后立即对后续生成生效；**字段引用为编辑期写入，改规则后重新点一次 Bind Script 即可重挂并刷新引用**。
 
@@ -234,7 +239,8 @@ ScriptBinder/
 ├── LICENSE                      # MIT
 ├── Editor/
 │   ├── NuoYan.ScriptBinder.asmdef
-│   ├── BindRules.cs             # 规则资产 + 代码生成逻辑
+│   ├── BindType.cs             # 内置类型枚举（仅参考，类型匹配已由 BindRules 资产的字符串规则驱动）
+│   ├── BindRules.cs             # 规则资产 + 代码生成逻辑（含类型表达式解析 ResolveRuleType）
 │   ├── ScriptBinder.cs          # Inspector “Bind Script” 按钮 + 生成对话框（模式 / 父类 / 字段预览）
 │   └── ScriptBinderBindHelper.cs# 四步绑定管线状态机（生成→编译→挂载→填充）＋分步菜单
 ```

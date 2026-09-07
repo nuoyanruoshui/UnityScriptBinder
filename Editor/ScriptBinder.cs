@@ -296,7 +296,7 @@ namespace NuoYan.ScriptBinder
                             string fieldName = rules.GetBindFieldName(child.name);
                             string visible = rules.GetBindFieldVisible(child.name);
                             string typeName = rules.GetBindFieldTypeName(child.name);
-                            EditorGUILayout.LabelField(fieldName, visible + " " + typeName);
+                            EditorGUILayout.LabelField(fieldName, visible + " " + BindRules.GetTypeDisplayName(typeName));
                         }
                     }
                     EditorGUILayout.EndScrollView();

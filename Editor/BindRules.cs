@@ -33,7 +33,21 @@ namespace NuoYan.ScriptBinder
     public class BindRule
     {
         public string Prefix;
-        public BindType Type;
+#if ODIN_INSPECTOR
+        [ValueDropdown(nameof(GetDropdownItems))]
+#endif
+        public string Type;
+#if ODIN_INSPECTOR
+        private ValueDropdownList<string> GetDropdownItems()
+        {
+            var list = new ValueDropdownList<string>();
+            foreach (var type in BindRules.Instance.BindTypes)
+            {
+                list.Add(type);
+            }
+            return list;
+        }
+#endif
     }
     [System.Serializable]
     public class FieldVisibleRule
@@ -76,28 +90,47 @@ namespace NuoYan.ScriptBinder
 
         [Tooltip("默认绑定模式：Reference=引用赋值（SerializeField+编辑器填充）；Runtime=运行时绑定（BindComponents 手动调用）；Both=两者兼有（填充优先，运行时兜底）。生成弹窗内可临时切换")]
         public BindMode DefaultMode = BindMode.Reference;
-
+#if ODIN_INSPECTOR
+        [SerializeField]
+        public List<string> BindTypes = new List<string>()
+        {
+            "UnityEngine.UI.Text",
+            "TMPro.TMP_Text",
+            "UnityEngine.UI.Image",
+            "UnityEngine.UI.Button",
+            "UnityEngine.UI.Toggle",
+            "UnityEngine.UI.Slider",
+            "UnityEngine.UI.Scrollbar",
+            "UnityEngine.UI.Dropdown",
+            "UnityEngine.UI.InputField",
+            "UnityEngine.RectTransform",
+            "UnityEngine.Transform",
+            "UnityEngine.GameObject",
+        };
+#endif
         public List<FieldVisibleRule> FieldVisibleRules = new List<FieldVisibleRule>()
-    {
-        new FieldVisibleRule() { Prefix = "m_", Visible = VisibleType.Private },
-        new FieldVisibleRule() { Prefix = "M_", Visible = VisibleType.Protected },
-        new FieldVisibleRule() { Prefix = "_", Visible = VisibleType.Public },
-    };
+        {
+            new FieldVisibleRule() { Prefix = "m_", Visible = VisibleType.Private },
+            new FieldVisibleRule() { Prefix = "M_", Visible = VisibleType.Protected },
+            new FieldVisibleRule() { Prefix = "_", Visible = VisibleType.Public },
+        };
+
         public List<BindRule> Rules = new List<BindRule>()
-    {
-        new BindRule() { Prefix = "img", Type = BindType.Image },
-        new BindRule() { Prefix = "btn", Type = BindType.Button },
-        new BindRule() { Prefix = "tgl", Type = BindType.Toggle },
-        new BindRule() { Prefix = "sld", Type = BindType.Slider },
-        new BindRule() { Prefix = "sbr", Type = BindType.Scrollbar },
-        new BindRule() { Prefix = "drp", Type = BindType.Dropdown },
-        new BindRule() { Prefix = "ipt", Type = BindType.InputField },
-        new BindRule() { Prefix = "txt", Type = BindType.Text },
-        new BindRule() { Prefix = "tmp", Type = BindType.TMP_Text },
-        new BindRule() { Prefix = "rect", Type = BindType.RectTransform },
-        new BindRule() { Prefix = "trans", Type = BindType.Transform },
-        new BindRule() { Prefix = "go", Type = BindType.GameObject },
-    };
+        {
+            new BindRule() { Prefix = "img", Type = "UnityEngine.UI.Image" },
+            new BindRule() { Prefix = "btn", Type = "UnityEngine.UI.Button" },
+            new BindRule() { Prefix = "tgl", Type = "UnityEngine.UI.Toggle" },
+            new BindRule() { Prefix = "sld", Type = "UnityEngine.UI.Slider" },
+            new BindRule() { Prefix = "sbr", Type = "UnityEngine.UI.Scrollbar" },
+            new BindRule() { Prefix = "drp", Type = "UnityEngine.UI.Dropdown" },
+            new BindRule() { Prefix = "ipt", Type = "UnityEngine.UI.InputField" },
+            new BindRule() { Prefix = "txt", Type = "UnityEngine.UI.Text" },
+            new BindRule() { Prefix = "tmp", Type = "TMPro.TMP_Text" },
+            new BindRule() { Prefix = "rect", Type = "UnityEngine.RectTransform" },
+            new BindRule() { Prefix = "trans", Type = "UnityEngine.Transform" },
+            new BindRule() { Prefix = "go", Type = "UnityEngine.GameObject" },
+        };
+
 
         /// <summary>该子物体是否会被生成为绑定字段（前缀命中 FieldVisibleRules）</summary>
         public bool IsBindField(string childName)
@@ -105,7 +138,7 @@ namespace NuoYan.ScriptBinder
             return MatchRule(childName);
         }
 
-        /// <summary>该子物体的字段类型名，例如 m_imgIcon -> Image</summary>
+        /// <summary>该子物体的字段类型表达式（BindRule.Type 原文，如 UnityEngine.UI.Image / 自定义组件全名）</summary>
         public string GetBindFieldTypeName(string childName)
         {
             return GetFieldType(childName);
@@ -192,9 +225,9 @@ namespace NuoYan.ScriptBinder
                         Debug.LogWarning(string.Format("[ScriptBinder] 检测到重复命名的绑定字段：{0}，已忽略，同名节点只绑定最早遍历到的一个。",
                             BuildPath(child)));
                     }
-                    // 容器型绑定（rect / go）作为边界：自身绑上字段，但不再深入其子节点
-                    var type = GetFieldType(child.name);
-                    if (type == nameof(BindType.RectTransform) || type == nameof(BindType.GameObject))
+                    // 容器型绑定（规则类型解析为 RectTransform / GameObject，如默认的 rect / go 前缀）
+                    // 作为边界：自身绑上字段，但不再深入其子节点
+                    if (IsContainerBoundary(GetFieldType(child.name)))
                     {
                         continue;
                     }
@@ -216,17 +249,18 @@ namespace NuoYan.ScriptBinder
             return string.Join("/", names);
         }
 
-        // 获得字段类型 例如 m_BtnStart -> Button
+        // 获得字段类型表达式（BindRule.Type 原文），例如 m_btnStart 命中 btn 规则 -> UnityEngine.UI.Button
         private string GetFieldType(string name)
         {
             foreach (var rule in Rules)
             {
                 if (GetFieldName(name).StartsWith(rule.Prefix))
                 {
-                    return rule.Type.ToString();
+                    return string.IsNullOrWhiteSpace(rule.Type) ? "UnityEngine.GameObject" : rule.Type.Trim();
                 }
             }
-            return "GameObject";
+            // 未命中任何类型前缀：默认绑整个子物体（与旧版 GameObject 兜底一致）
+            return "UnityEngine.GameObject";
         }
         //根据前缀获取字段的可见性 例如 m_BtnStart -> private
         private string GetFieldVisible(string name)
@@ -263,6 +297,105 @@ namespace NuoYan.ScriptBinder
                 }
             }
             return false;
+        }
+
+        // =====================================================================
+        // 类型表达式解析：BindRule.Type 是字符串（可全限定名，也可简单名），
+        // 由这里解析成真实 Type，供容器边界 / using 收集 / 编辑器填充 / 运行时查找共用。
+        // =====================================================================
+
+        private static readonly Dictionary<string, Type> s_TypeCache = new Dictionary<string, Type>();
+
+        /// <summary>
+        /// 把 BindRule.Type 的类型表达式解析为真实 Type。
+        /// 含 '.' 视为全限定名（跨程序集查找）；简单名在所有已加载程序集中按名匹配。
+        /// 找不到返回 null（生成时按原文字面量输出，编译错误会提示用户修正）。
+        /// </summary>
+        public static Type ResolveRuleType(string typeExpr)
+        {
+            if (string.IsNullOrWhiteSpace(typeExpr))
+            {
+                return null;
+            }
+            typeExpr = typeExpr.Trim();
+            if (s_TypeCache.TryGetValue(typeExpr, out var cached))
+            {
+                return cached;
+            }
+            Type result = null;
+            if (typeExpr.IndexOf('.') >= 0)
+            {
+                result = Type.GetType(typeExpr);
+                if (result == null)
+                {
+                    foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        result = asm.GetType(typeExpr);
+                        if (result != null)
+                        {
+                            break;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // 简单名：按类名在已加载程序集里查找
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    if (asm.IsDynamic)
+                    {
+                        continue;
+                    }
+                    Type[] types;
+                    try
+                    {
+                        types = asm.GetTypes();
+                    }
+                    catch (Exception)
+                    {
+                        continue; // 某些程序集无法反射（如内置/动态），跳过
+                    }
+                    foreach (var t in types)
+                    {
+                        if (t != null && t.Name == typeExpr)
+                        {
+                            result = t;
+                            break;
+                        }
+                    }
+                    if (result != null)
+                    {
+                        break;
+                    }
+                }
+            }
+            s_TypeCache[typeExpr] = result;
+            return result;
+        }
+
+        /// <summary>去掉命名空间后的展示名（UnityEngine.UI.Image -> Image），用于 UI 预览等。</summary>
+        public static string GetTypeDisplayName(string typeExpr)
+        {
+            if (string.IsNullOrWhiteSpace(typeExpr))
+            {
+                return typeExpr;
+            }
+            int idx = typeExpr.LastIndexOf('.');
+            return idx >= 0 ? typeExpr.Substring(idx + 1) : typeExpr;
+        }
+
+        /// <summary>类型解析为 GameObject / RectTransform 的规则视为容器边界（绑自身、不再深入子节点）。</summary>
+        private bool IsContainerBoundary(string typeExpr)
+        {
+            var t = ResolveRuleType(typeExpr);
+            if (t != null)
+            {
+                return t == typeof(GameObject) || t == typeof(RectTransform);
+            }
+            // 解析不到时按名字兜底判断
+            return typeExpr != null && (typeExpr.EndsWith("GameObject", StringComparison.Ordinal)
+                                        || typeExpr.EndsWith("RectTransform", StringComparison.Ordinal));
         }
 
 #if UNITY_EDITOR
@@ -436,23 +569,22 @@ namespace NuoYan.ScriptBinder
         }
 
         // 单条运行时查找表达式：按相对根节点的路径 transform.Find(...)
-        private string BuildRuntimeLookup(Transform child, Transform root, string fieldTypeName)
+        // GameObject -> Find 后取 gameObject；Transform -> Find 直赋；
+        // 其余组件类型（RectTransform / TMP_Text / 自定义组件…）-> Find 后 GetComponent<T>（T 为规则原文）
+        private string BuildRuntimeLookup(Transform child, Transform root, string rawType)
         {
             string path = BuildRelativePath(child, root);
-            if (fieldTypeName == nameof(BindType.GameObject))
+            string typeExpr = string.IsNullOrWhiteSpace(rawType) ? "UnityEngine.GameObject" : rawType.Trim();
+            var t = ResolveRuleType(typeExpr);
+            if (t == typeof(GameObject))
             {
                 return string.Format("transform.Find(\"{0}\")?.gameObject", path);
             }
-            if (fieldTypeName == nameof(BindType.Transform))
+            if (t == typeof(Transform))
             {
                 return string.Format("transform.Find(\"{0}\")", path);
             }
-            if (fieldTypeName == nameof(BindType.RectTransform))
-            {
-                return string.Format("transform.Find(\"{0}\") as RectTransform", path);
-            }
-            // 其余组件类型（Text/Image/Button/.../TMP_Text）：Find 后 GetComponent<T>
-            return string.Format("transform.Find(\"{0}\")?.GetComponent<{1}>()", path, fieldTypeName);
+            return string.Format("transform.Find(\"{0}\")?.GetComponent<{1}>()", path, typeExpr);
         }
 
         // 从 child 向上到 root（不含 root）拼接 '/' 相对路径
@@ -469,37 +601,40 @@ namespace NuoYan.ScriptBinder
             return string.Join("/", names);
         }
 
-        // 收集生成文件需要的 using（去重、固定顺序）
+        // 收集生成文件需要的 using：
+        // 规则类型是全限定名（含 '.'）→ 无需 using，按原文写入；
+        // 规则类型是简单名 → 按其解析出的命名空间补 using（同文件命名空间 / UnityEngine 内置的除外）。
         private static List<string> CollectBindUsings(GameObject go)
         {
             var list = new List<string> { "using UnityEngine;" };
-            bool needUI = false;
-            bool needTMP = false;
-            if (Instance == null)
+            var rules = Instance;
+            if (rules == null)
             {
                 return list;
             }
-            foreach (Transform child in Instance.CollectBindChildren(go))
+            string fileNs = rules.Namespace;
+            var added = new HashSet<string> { "using UnityEngine;" };
+            foreach (Transform child in rules.CollectBindChildren(go))
             {
-                var type = Instance.GetBindFieldTypeName(child.name);
-                if (type == nameof(BindType.TMP_Text))
+                string raw = rules.GetBindFieldTypeName(child.name);
+                if (string.IsNullOrWhiteSpace(raw) || raw.Trim().IndexOf('.') >= 0)
                 {
-                    needTMP = true;
+                    continue; // 空 / 全限定名：无需 using
                 }
-                else if (type != nameof(BindType.Transform)
-                         && type != nameof(BindType.RectTransform)
-                         && type != nameof(BindType.GameObject))
+                var t = ResolveRuleType(raw);
+                if (t == null || string.IsNullOrEmpty(t.Namespace))
                 {
-                    needUI = true;
+                    continue; // 解析不到或全局命名空间：保持原样输出，编译错误可见
                 }
-            }
-            if (needTMP)
-            {
-                list.Add("using TMPro;");
-            }
-            if (needUI)
-            {
-                list.Add("using UnityEngine.UI;");
+                if (t.Namespace == "UnityEngine" || (!string.IsNullOrEmpty(fileNs) && t.Namespace == fileNs))
+                {
+                    continue; // 已内置 using UnityEngine；同文件命名空间无需 using
+                }
+                string line = "using " + t.Namespace + ";";
+                if (added.Add(line))
+                {
+                    list.Add(line);
+                }
             }
             return list;
         }
