@@ -264,7 +264,7 @@ namespace NuoYan.ScriptBinder
                 return;
             }
 
-            EditorGUILayout.HelpBox("将按选中 GameObject 的名字生成同名脚本，自动执行 4 步：\n① 代码生成 → ② 等待编译 → ③ 挂载组件 → ④ 填充引用\n注意：同名脚本会被【覆盖】！", MessageType.Warning);
+            EditorGUILayout.HelpBox("将按选中 GameObject 的名字生成同名脚本，自动执行 4 步：\n① 代码生成 → ② 等待编译 → ③ 挂载组件 → ④ 填充引用\n注意：请填写带命名空间的全路径，同名脚本会被【覆盖】！", MessageType.Warning);
 
             EditorGUILayout.Space(8f);
             m_NameSpace = EditorGUILayout.TextField("命名空间", m_NameSpace);
