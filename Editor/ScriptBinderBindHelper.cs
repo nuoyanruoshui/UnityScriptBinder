@@ -139,8 +139,11 @@ namespace NuoYan.ScriptBinder
         /// <param name="targets">选中的 GameObject（场景对象 / Prefab Stage 对象 / Project 窗口预制体资产）</param>
         /// <param name="baseClass">自定义父类表达式，如 "MonoBehaviour"、"CardGame.UGuiForm"</param>
         /// <param name="extraUsings">额外 using 行（如父类所在命名空间）</param>
+        /// <param name="cusns">本次生成使用的命名空间；空白时用 BindRules.Namespace</param>
+        /// <param name="cussf">本次生成写入的目录（相对 Assets）；空白时用 BindRules.SavePath</param>
+        /// <param name="saveFileMode">本次生成的文件布局；null 时用 BindRules.SaveFileMode</param>
         /// <param name="mode">绑定模式；null 时取 BindRules.DefaultMode</param>
-        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null, BindMode? mode = null)
+        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null)
         {
             if (targets == null || targets.Count == 0)
             {
@@ -153,8 +156,12 @@ namespace NuoYan.ScriptBinder
                 Debug.LogError("[ScriptBinder] 找不到 BindRules 配置，无法生成绑定代码。");
                 return;
             }
+
             BindMode bindMode = mode ?? rules.DefaultMode;
-            string genDir = rules.SavePath == null ? string.Empty : rules.SavePath;
+            // 与 GenerateBindCode 的回退规则保持一致：空白 = 用资产默认值
+            SaveFileMode fileMode = saveFileMode ?? rules.SaveFileMode;
+            string saveRoot = string.IsNullOrWhiteSpace(cussf) ? (rules.SavePath ?? string.Empty) : cussf.Trim();
+            string genRoot = saveRoot.Replace('\\', '/').Trim().Trim('/');
 
             // Prefab Stage 有未保存修改时提醒：编译期间若 Stage 被关闭，自动挂载将基于已保存的
             // 资产内容直接写回 .prefab，未保存的 Stage 修改可能丢失。
@@ -204,16 +211,12 @@ namespace NuoYan.ScriptBinder
                     continue;
                 }
 
-                var task = Capture(go, genDir);
+                var task = Capture(go, GenDirOf(fileMode, genRoot, name));
                 task.mode = (int)bindMode;
 
-                // —— 步骤 1/4：代码生成（先比对内容，无变化时不触发重编译）——
+                // —— 步骤 1/4：代码生成（内部按内容比对，无变化时不触发重编译）——
                 string rel = RelScriptPath(task);
-                string abs = Path.Combine(Application.dataPath, rel.Substring("Assets/".Length).Replace('/', Path.DirectorySeparatorChar));
-                string oldText = File.Exists(abs) ? File.ReadAllText(abs) : null;
-                rules.GenerateBindCode(go, baseClass, extraUsings, false, bindMode);
-                string newText = File.Exists(abs) ? File.ReadAllText(abs) : null;
-                bool changed = oldText != newText;
+                bool changed = rules.GenerateBindCode(go, baseClass, extraUsings, false, cusns, cussf, saveFileMode, bindMode);
                 anyChanged |= changed;
                 anyGenerated = true;
 
@@ -683,7 +686,11 @@ namespace NuoYan.ScriptBinder
 
         private static Type GetCompiledType(BindTask t)
         {
-            string path = RelScriptPath(t);
+            return GetCompiledTypeByPath(RelScriptPath(t));
+        }
+
+        private static Type GetCompiledTypeByPath(string path)
+        {
             if (m_TypeCache.TryGetValue(path, out var cached))
             {
                 return cached;
@@ -694,21 +701,43 @@ namespace NuoYan.ScriptBinder
             return type;
         }
 
-        /// <summary>按类名（=生成文件名）从生成目录加载已编译类型；未编译/路径不符返回 null。</summary>
+        /// <summary>
+        /// 按类名（=生成文件名）从生成目录加载已编译类型；未编译/路径不符返回 null。
+        /// 分步菜单没有任务里的 genDir，这里把两种布局都试一遍（与 BindRules.SaveFileMode 两种取值对应）。
+        /// </summary>
         private static Type LoadTypeByName(string className)
         {
             var rules = BindRules.Instance;
-            string gen = rules != null ? rules.SavePath : string.Empty;
-            var t = new BindTask { className = className, genDir = gen };
-            return GetCompiledType(t);
+            string root = rules != null ? (rules.SavePath ?? string.Empty) : string.Empty;
+            foreach (var rel in new[] { AssetPathOf(root, className), AssetPathOf(Path.Combine(root, className), className) })
+            {
+                var type = GetCompiledTypeByPath(rel);
+                if (type != null)
+                {
+                    return type;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>按文件布局算出任务实际所在目录：FileByFile = 生成根；FolderByFolder = 生成根/类名。</summary>
+        private static string GenDirOf(SaveFileMode fileMode, string genRoot, string className)
+        {
+            return fileMode == SaveFileMode.FolderByFolder ? Path.Combine(genRoot, className) : genRoot;
         }
 
         private static string RelScriptPath(BindTask t)
         {
-            var gen = string.IsNullOrEmpty(t.genDir) ? string.Empty : t.genDir.Replace('\\', '/').Trim('/');
+            return AssetPathOf(t.genDir, t.className);
+        }
+
+        // 生成目录（相对 Assets，可为空 / 含子文件夹）+ 类名 → Assets 下的脚本路径
+        private static string AssetPathOf(string genDir, string className)
+        {
+            var gen = string.IsNullOrEmpty(genDir) ? string.Empty : genDir.Replace('\\', '/').Trim('/');
             return string.IsNullOrEmpty(gen)
-                ? "Assets/" + t.className + ".cs"
-                : "Assets/" + gen + "/" + t.className + ".cs";
+                ? "Assets/" + className + ".cs"
+                : "Assets/" + gen + "/" + className + ".cs";
         }
 
         // =====================================================================

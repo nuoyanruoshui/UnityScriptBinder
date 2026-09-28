@@ -23,6 +23,17 @@ namespace NuoYan.ScriptBinder
         Runtime = 1,
         Both = 2,
     }
+    public enum SaveFileMode
+    {
+        /// <summary>
+        /// 将生成的文件写入默认或者指定的文件夹中
+        /// </summary>
+        FileByFile,
+        /// <summary>
+        /// 将生成的文件写入同名文件夹中，如果文件夹不存在则创建
+        /// </summary>
+        FolderByFolder,
+    }
     public enum VisibleType
     {
         Private,
@@ -90,6 +101,8 @@ namespace NuoYan.ScriptBinder
 
         [Tooltip("默认绑定模式：Reference=引用赋值（SerializeField+编辑器填充）；Runtime=运行时绑定（BindComponents 手动调用）；Both=两者兼有（填充优先，运行时兜底）。生成弹窗内可临时切换")]
         public BindMode DefaultMode = BindMode.Reference;
+        [Tooltip("生成文件时写入的模式：FileByFile=将生成的文件写入默认或者指定的文件夹中；FolderByFolder=将生成的文件写入同名文件夹中，如果文件夹不存在则创建")]
+        public SaveFileMode SaveFileMode = SaveFileMode.FileByFile;
 #if ODIN_INSPECTOR
         [SerializeField]
         public List<string> BindTypes = new List<string>()
@@ -402,15 +415,22 @@ namespace NuoYan.ScriptBinder
         /// <param name="baseClass">自定义父类表达式（留空/空白默认 MonoBehaviour）</param>
         /// <param name="extraUsings">额外追加到生成文件头部的 using 行（如父类所在命名空间）</param>
         /// <param name="refresh">是否立即刷新资源（触发编译）。批量生成时传 false，由调用方统一刷新一次，避免触发多次编译</param>
+        /// <param name="cusns">本次生成使用的命名空间；空白时回退资产上的 Namespace</param>
+        /// <param name="cussf">本次生成写入的目录（相对 Assets，如 "Scripts/UI"）；空白时回退资产上的 SavePath</param>
+        /// <param name="saveFileMode">本次生成的文件布局；null 时回退资产上的 SaveFileMode</param>
         /// <param name="mode">绑定模式（Reference/Runtime/Both）；null 时取资产默认 BindRules.DefaultMode</param>
-        public void GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true, BindMode? mode = null)
+        /// <returns>磁盘上是否有文件实际变化（含删除旧布局残留文件），供调用方判断是否需要触发重编译</returns>
+        public bool GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null)
         {
             if (go == null)
             {
-                return;
+                return false;
             }
             var className = go.name;
-            var ns = string.IsNullOrEmpty(Namespace) ? string.Empty : Namespace;
+            // 弹窗/调用方传空白 → 回退资产默认；资产上也是空白时才真的不写命名空间 / 落在 Assets 根
+            var ns = string.IsNullOrWhiteSpace(cusns) ? (Namespace ?? string.Empty).Trim() : cusns.Trim();
+            var saveRoot = string.IsNullOrWhiteSpace(cussf) ? (SavePath ?? string.Empty).Trim() : cussf.Trim();
+            var fileMode = saveFileMode ?? SaveFileMode;
             if (string.IsNullOrWhiteSpace(baseClass))
             {
                 baseClass = "MonoBehaviour";
@@ -449,7 +469,7 @@ namespace NuoYan.ScriptBinder
             // 生成主 partial 文件（字段声明）
             var gen = new StringBuilder();
             BuildHeader(gen, go);
-            var usings = CollectBindUsings(go);
+            var usings = CollectBindUsings(go, ns);
             var writtenUsings = new HashSet<string>(usings);
             foreach (var usingLine in usings)
             {
@@ -502,23 +522,254 @@ namespace NuoYan.ScriptBinder
             logic.AppendLine("}");
             CloseNamespace(logic, ns);
 
-            var dir = Path.Combine(Application.dataPath, SavePath);
-            if (!Directory.Exists(dir))
+            var rootDir = Path.Combine(Application.dataPath, NormalizeRelativeDir(saveRoot));
+            if (!Directory.Exists(rootDir))
             {
-                Directory.CreateDirectory(dir);
+                Directory.CreateDirectory(rootDir);
             }
-            var basePath = Path.Combine(dir, className);
-            File.WriteAllText(basePath + ".cs", gen.ToString());
+
+            // 不含扩展名的写入基路径：FileByFile = root/类名；FolderByFolder = root/类名/类名
+            string basePath;
+            if (fileMode == SaveFileMode.FolderByFolder)
+            {
+                var subDir = Path.Combine(rootDir, className);
+                if (!Directory.Exists(subDir))
+                {
+                    Directory.CreateDirectory(subDir);
+                }
+                basePath = Path.Combine(subDir, className);
+            }
+            else
+            {
+                basePath = Path.Combine(rootDir, className);
+            }
+
+            // 切换布局 / 改过生成文件夹后，旧位置可能残留同名生成文件 → 与本次生成构成重复定义（CS0101）
+            bool changed = WarnStaleGeneratedFiles(fileMode, className, basePath);
+
+            changed |= WriteIfDifferent(basePath + ".cs", gen.ToString());
+            // 逻辑文件只在首次生成时创建，之后不覆盖（开发者手写的逻辑不能丢）
             if (!File.Exists(basePath + ".Logic.cs"))
             {
                 File.WriteAllText(basePath + ".Logic.cs", logic.ToString());
+                changed = true;
             }
+            RememberGenPath(className, basePath);
 
             if (refresh)
             {
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
                 Debug.Log(string.Format("[ScriptBinder] 已生成绑定代码 <b>{0}</b>（等待编译后挂载/填引用）", className));
+            }
+            return changed;
+        }
+
+        // 生成目录写法归一：统一斜杠、去掉首尾斜杠（"Scripts/UI/" 与 "\\Scripts\\UI" 等价）
+        private static string NormalizeRelativeDir(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir))
+            {
+                return string.Empty;
+            }
+            return dir.Replace('\\', '/').Trim().Trim('/');
+        }
+
+        // 只在内容有变化时写盘：内容一致时不更新时间戳，避免 AssetDatabase 重导入引发无谓的整轮编译
+        private static bool WriteIfDifferent(string path, string text)
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    if (File.ReadAllText(path) == text)
+                    {
+                        return false;
+                    }
+                }
+                catch (Exception)
+                {
+                    // 读取失败（如被占用）按“需要写入”处理
+                }
+            }
+            File.WriteAllText(path, text);
+            return true;
+        }
+
+        // 绝对路径 → 相对 Assets 的正斜杠路径（用于日志与 EditorPrefs 记录）
+        private static string ToAssetRelativePath(string absBasePath)
+        {
+            var abs = absBasePath.Replace('\\', '/');
+            var root = Application.dataPath.Replace('\\', '/').TrimEnd('/');
+            if (abs.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return abs.Substring(root.Length + 1);
+            }
+            return abs; // 工程外（理论上不会出现），原样记录以便照常提示
+        }
+
+        private const string GenPathPrefsPrefix = "ScriptBinder.GenPath."; // 记录每个类上次生成位置，便于发现改目录后的残留
+        private static readonly HashSet<string> s_StaleKept = new HashSet<string>(); // 本会话中用户已选择“保留”的残留文件，不再重复弹窗
+
+        // 记录本次生成位置（不含扩展名，相对 Assets）
+        private static void RememberGenPath(string className, string absBasePath)
+        {
+            EditorPrefs.SetString(GenPathPrefsPrefix + className, ToAssetRelativePath(absBasePath));
+        }
+
+        /// <summary>
+        /// 检测“另一种布局 / 上次生成位置”下残留的同名生成文件：它与本次生成的文件同名，
+        /// 同时存在会直接导致 CS0101 重复定义编译失败。弹窗由用户决定是否删除，本工具不擅自删用户的文件。
+        /// </summary>
+        /// <returns>是否真的删除了文件</returns>
+        private static bool WarnStaleGeneratedFiles(SaveFileMode fileMode, string className, string currentBasePath)
+        {
+            bool removed = false;
+            var currentDir = Path.GetDirectoryName(currentBasePath) ?? string.Empty;
+            // 同一个生成根下的另一种布局：
+            //   本次 FolderByFolder（root/类名/类名）→ 旧文件在上一层 root/类名
+            //   本次 FileByFile（root/类名）→ 旧文件在同名子文件夹 root/类名/类名
+            var staleCandidates = new List<string>
+            {
+                fileMode == SaveFileMode.FolderByFolder ? currentDir : Path.Combine(currentBasePath, className)
+            };
+            // 改过“生成文件夹”的情况：上次生成位置完全在别的目录，同样会残留
+            var lastRel = EditorPrefs.GetString(GenPathPrefsPrefix + className, string.Empty);
+            if (!string.IsNullOrEmpty(lastRel))
+            {
+                var lastAbs = Path.Combine(Application.dataPath, lastRel.Replace('/', Path.DirectorySeparatorChar));
+                if (!string.Equals(lastAbs, currentBasePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    staleCandidates.Add(lastAbs);
+                }
+            }
+
+            foreach (var stale in staleCandidates)
+            {
+                string csFile = stale + ".cs";
+                string logicFile = stale + ".Logic.cs";
+                if (!File.Exists(csFile) && !File.Exists(logicFile))
+                {
+                    s_StaleKept.Remove(stale); // 文件已不在，下次真的出现时重新提示
+                    continue;
+                }
+                if (!s_StaleKept.Add(stale))
+                {
+                    continue; // 本次会话已问过且用户选择保留，不再打扰
+                }
+
+                var relCs = ToAssetRelativePath(stale) + ".cs";
+                string msg = string.Format(
+                    "在旧位置发现同名生成文件：\n\n{0}\n\n它与本次生成的文件同名，同时存在会导致 CS0101 重复定义、整个工程编译失败。\n\n是否删除该旧文件（含对应的 .Logic.cs 与 .meta）？",
+                    relCs);
+                if (!LooksToolGenerated(csFile))
+                {
+                    msg += "\n\n注意：该文件不含本工具的生成标记，可能不是本工具生成的，删除前请自行确认内容。";
+                }
+                if (EditorUtility.DisplayDialog("ScriptBinder - 发现旧位置残留文件", msg, "删除旧文件", "保留（我自己处理）"))
+                {
+                    bool anyExisted = File.Exists(csFile) || File.Exists(csFile + ".meta")
+                                      || File.Exists(logicFile) || File.Exists(logicFile + ".meta");
+                    // 用 & 而非 &&：删不掉也要把能删的都试一遍，再统一汇报
+                    bool ok = TryDeleteFile(csFile) & TryDeleteFile(csFile + ".meta")
+                              & TryDeleteFile(logicFile) & TryDeleteFile(logicFile + ".meta");
+                    RemoveEmptyDir(Path.GetDirectoryName(stale), currentDir);
+                    s_StaleKept.Remove(stale);
+                    // 只有真的删掉了东西才算“磁盘有变化”：删除失败时若仍上报变化，
+                    // 管线会等一轮永远不会到来的编译（FilesChanged=1 但 Unity 无可编译内容）
+                    removed |= anyExisted && ok;
+                    if (ok)
+                    {
+                        Debug.Log("[ScriptBinder] 已删除旧位置的同名生成文件：" + relCs);
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[ScriptBinder] 旧位置的同名生成文件未能全部删除：" + relCs +
+                                         "（可能被占用或只读）。该文件与本次生成的同名类会导致 CS0101 重复定义，请手动删除后重新绑定。");
+                    }
+                }
+            }
+            return removed;
+        }
+
+        // 生成文件头部带 “Auto generated code for xxx by ScriptBinder” 标记；用于删除前的安全提示
+        private static bool LooksToolGenerated(string csFile)
+        {
+            if (!File.Exists(csFile))
+            {
+                return true; // 只有 .Logic.cs 存在时按工具生成处理
+            }
+            try
+            {
+                return File.ReadAllText(csFile).Contains("by ScriptBinder");
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 删除单个文件；不存在视为成功。
+        /// 未走 AssetDatabase 而直接删文件（本工具的批量写法），所以：
+        ///   - 版本控制常把脚本置为只读（如 Perforce），先清掉只读位，否则 File.Delete 会抛异常；
+        ///   - 文件被 IDE 占用等情况下不能让异常冒泡打断整批绑定，这里吞掉并返回失败由调用方汇报。
+        /// .meta 一并删除是 Unity 手册对“在编辑器外删除资产”的要求，否则刷新时会留一条
+        /// “A meta data file (.meta) exists but its asset ... can't be found” 的警告（Unity 之后会自行清理）。
+        /// </summary>
+        private static bool TryDeleteFile(string path)
+        {
+            if (!File.Exists(path))
+            {
+                return true;
+            }
+            try
+            {
+                var attrs = File.GetAttributes(path);
+                if ((attrs & FileAttributes.ReadOnly) != 0)
+                {
+                    File.SetAttributes(path, attrs & ~FileAttributes.ReadOnly);
+                }
+                File.Delete(path);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[ScriptBinder] 删除文件失败：" + path + "\n" + e.Message);
+                return false;
+            }
+        }
+
+        // 删除空目录：仅在 Assets 内、目录确为空、且不是生成根（keepDir）本身时才删，顺带清掉 .meta
+        private static void RemoveEmptyDir(string absDir, string keepDir)
+        {
+            if (string.IsNullOrEmpty(absDir) || !Directory.Exists(absDir))
+            {
+                return;
+            }
+            var dir = absDir.Replace('\\', '/').TrimEnd('/');
+            var assetsRoot = Application.dataPath.Replace('\\', '/').TrimEnd('/');
+            if (!dir.StartsWith(assetsRoot + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return; // 不在 Assets 内，不动
+            }
+            // 生成根是用户自己定的目录，即使空了也保留，不替用户做这个决定
+            if (string.Equals(dir, keepDir.Replace('\\', '/').TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+            if (Directory.GetFileSystemEntries(dir).Length > 0)
+            {
+                return; // 还有别的东西，保留
+            }
+            try
+            {
+                Directory.Delete(dir);
+                TryDeleteFile(dir + ".meta");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[ScriptBinder] 清理空目录失败：" + dir + "\n" + e.Message);
             }
         }
 
@@ -604,7 +855,8 @@ namespace NuoYan.ScriptBinder
         // 收集生成文件需要的 using：
         // 规则类型是全限定名（含 '.'）→ 无需 using，按原文写入；
         // 规则类型是简单名 → 按其解析出的命名空间补 using（同文件命名空间 / UnityEngine 内置的除外）。
-        private static List<string> CollectBindUsings(GameObject go)
+        // fileNs 必须传本次实际生效的命名空间（弹窗可覆盖资产默认值），否则会漏 using 或补多余的 using。
+        private static List<string> CollectBindUsings(GameObject go, string fileNs)
         {
             var list = new List<string> { "using UnityEngine;" };
             var rules = Instance;
@@ -612,7 +864,6 @@ namespace NuoYan.ScriptBinder
             {
                 return list;
             }
-            string fileNs = rules.Namespace;
             var added = new HashSet<string> { "using UnityEngine;" };
             foreach (Transform child in rules.CollectBindChildren(go))
             {
