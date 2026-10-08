@@ -402,7 +402,6 @@ namespace NuoYan.ScriptBinder
                     }
                     else
                     {
-                        // Runtime 模式字段不序列化、Inspector 看不到，与生成一致地不显示 Header
                         foreach (var group in groups)
                         {
                             if (group.Count == 0)
@@ -411,8 +410,6 @@ namespace NuoYan.ScriptBinder
                             }
                             if (withHeader)
                             {
-                                // 固定显示 [Header]：生成代码里写的就是 UnityEngine.HeaderAttribute，
-                                // 预览必须与生成结果一致（与是否装了 Odin 无关，[Title] 是 Odin 私有特性，不能写进生成代码）
                                 EditorGUILayout.LabelField(string.Format("[Header(\"{0}\")]",
                                     BindRules.GetTypeDisplayName(rules.GetBindFieldTypeName(group[0].name))), EditorStyles.boldLabel);
                             }

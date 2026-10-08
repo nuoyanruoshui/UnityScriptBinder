@@ -1009,13 +1009,7 @@ namespace NuoYan.ScriptBinder
             return list;
         }
 
-        // 生成文件头部。注意：
-        //   - "Auto generated code for ... by ScriptBinder" 这一行是 LooksToolGenerated 用来识别“本工具生成”的标记，
-        //     三种语言下都保持英文原文，免得标记随语言变化而失效；
-        //   - Machine / Author 是结构化元信息，语言无关，也保持固定；
-        //   - 只有“请勿直接修改”那句是人类读的说明，跟随语言。
-        // 刻意不写生成时间：时间戳每次都不一样，会让"内容未变化就不重写"永远失效（每次绑定都重导入 + 域重载）。
-        // 生成内容必须只由"节点命名 + 规则 + 本次参数"决定，才谈得上可复现。要看某文件何时生成，看文件 mtime / git。
+        // 生成文件头部
         private static void BuildHeader(StringBuilder sb, GameObject go)
         {
             sb.AppendLine("/// <summary>");

@@ -348,6 +348,10 @@ ScriptBinder/
 
 ---
 
+- 如果你有什么建议或意见，欢迎在 Issues 提出，或发送邮件至邮箱。
+- Gmail: nuoyanruoshui@gmail.com
+- QQ: 2939213244@qq.com
+
 ## License
 
 [MIT](./LICENSE) © NuoYan

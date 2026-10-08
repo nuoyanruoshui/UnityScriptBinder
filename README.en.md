@@ -352,6 +352,10 @@ Implementation notes:
 
 ---
 
+- If you have any suggestions or feedback, please open an issue or send an email to me.
+- Gmail: nuoyanruoshui@gmail.com
+- QQ: 2939213244@qq.com
+
 ## License
 
 [MIT](./LICENSE) © NuoYan
