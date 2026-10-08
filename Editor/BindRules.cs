@@ -1,11 +1,11 @@
+#if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
-#if UNITY_EDITOR
 using UnityEditor;
-#endif
+
 #if ODIN_INSPECTOR
 using Sirenix.OdinInspector;
 #endif
@@ -60,6 +60,12 @@ namespace NuoYan.ScriptBinder
         }
 #endif
     }
+    public enum Language
+    {
+        English = 0,
+        Chinese = 1,
+        Japanese = 2,
+    }
     [System.Serializable]
     public class FieldVisibleRule
     {
@@ -93,6 +99,26 @@ namespace NuoYan.ScriptBinder
                 return m_Instance;
             }
         }
+
+        public static Language CurrentLanguage()
+        {
+            var rules = m_Instance != null ? m_Instance : LoadRulesOnceForLanguage();
+            return rules != null ? rules.DisplayLanguage : Language.English;
+        }
+
+        private static BindRules s_LangRules;
+        private static bool s_LangLoadAttempted;
+
+        private static BindRules LoadRulesOnceForLanguage()
+        {
+            if (!s_LangLoadAttempted)
+            {
+                s_LangLoadAttempted = true;
+                s_LangRules = Resources.Load<BindRules>("ScriptBinder/BindRules");
+            }
+            return s_LangRules;
+        }
+
         public string Namespace = "GameLogic";
 #if ODIN_INSPECTOR
         [FolderPath]
@@ -103,6 +129,11 @@ namespace NuoYan.ScriptBinder
         public BindMode DefaultMode = BindMode.Reference;
         [Tooltip("生成文件时写入的模式：FileByFile=将生成的文件写入默认或者指定的文件夹中；FolderByFolder=将生成的文件写入同名文件夹中，如果文件夹不存在则创建")]
         public SaveFileMode SaveFileMode = SaveFileMode.FileByFile;
+#if ODIN_INSPECTOR
+        [EnumToggleButtons]
+#endif
+        [Tooltip("插件界面与日志使用的语言")]
+        public Language DisplayLanguage = Language.English;
 #if ODIN_INSPECTOR
         [SerializeField]
         public List<string> BindTypes = new List<string>()
@@ -143,7 +174,6 @@ namespace NuoYan.ScriptBinder
             new BindRule() { Prefix = "trans", Type = "UnityEngine.Transform" },
             new BindRule() { Prefix = "go", Type = "UnityEngine.GameObject" },
         };
-
 
         /// <summary>该子物体是否会被生成为绑定字段（前缀命中 FieldVisibleRules）</summary>
         public bool IsBindField(string childName)
@@ -235,8 +265,7 @@ namespace NuoYan.ScriptBinder
                     }
                     else
                     {
-                        Debug.LogWarning(string.Format("[ScriptBinder] 检测到重复命名的绑定字段：{0}，已忽略，同名节点只绑定最早遍历到的一个。",
-                            BuildPath(child)));
+                        Debug.LogWarning(LocalizationConstant.Format("Log.DupField", BuildPath(child)));
                     }
                     // 容器型绑定（规则类型解析为 RectTransform / GameObject，如默认的 rect / go 前缀）
                     // 作为边界：自身绑上字段，但不再深入其子节点
@@ -419,12 +448,11 @@ namespace NuoYan.ScriptBinder
         /// <param name="cussf">本次生成写入的目录（相对 Assets，如 "Scripts/UI"）；空白时回退资产上的 SavePath</param>
         /// <param name="saveFileMode">本次生成的文件布局；null 时回退资产上的 SaveFileMode</param>
         /// <param name="mode">绑定模式（Reference/Runtime/Both）；null 时取资产默认 BindRules.DefaultMode</param>
-        /// <returns>磁盘上是否有文件实际变化（含删除旧布局残留文件），供调用方判断是否需要触发重编译</returns>
-        public bool GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null)
+        public void GenerateBindCode(GameObject go, string baseClass = "MonoBehaviour", List<string> extraUsings = null, bool refresh = true, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null, bool sameInAPart = false)
         {
             if (go == null)
             {
-                return false;
+                return;
             }
             var className = go.name;
             // 弹窗/调用方传空白 → 回退资产默认；资产上也是空白时才真的不写命名空间 / 落在 Assets 根
@@ -448,21 +476,47 @@ namespace NuoYan.ScriptBinder
             var bodyPad = Pad(classLevel + 1);
 
             // 递归所有后代，前缀命中 FieldVisibleRules 的才会生成字段（同名只保留首个）
+            // SameInAPart：把相同类型的字段排布到一起，逐组加 [Header("短类型名")]。
+            // Runtime 模式字段不序列化、Inspector 根本看不到该字段，[Header] 是死代码，
+            // 所以那里只按类型排序、不加 Header。
+            var groups = CollectBindFieldGroups(go, sameInAPart);
+            bool withHeader = sameInAPart && bindMode != BindMode.Runtime;
+
+            string groupHeader = "Header";
+#if ODIN_INSPECTOR
+            groupHeader = "Title";
+#endif
+
             var fieldLines = new List<string>();
-            foreach (Transform child in CollectBindChildren(go))
+            foreach (var group in groups)
             {
-                string visibility = GetFieldVisible(child.name);
-                string typeName = GetFieldType(child.name);
-                string fieldName = GetBindFieldName(child.name);
-                if (bindMode == BindMode.Runtime)
+                if (group.Count == 0)
                 {
-                    // 运行时绑定：字段不序列化，由 BindComponents() 在运行时查找赋值
-                    fieldLines.Add(string.Format("{0} {1} {2};", visibility, typeName, fieldName));
+                    continue;
                 }
-                else
+                if (withHeader)
                 {
-                    // 引用赋值 / 两者兼有：序列化字段，编辑器填充引用（Both 的运行时兜底见 BindComponents）
-                    fieldLines.Add(string.Format("[SerializeField] {0} {1} {2} = null;", visibility, typeName, fieldName));
+                    if (fieldLines.Count > 0)
+                    {
+                        fieldLines.Add(string.Empty); // 组间空一行
+                    }
+                    fieldLines.Add($"[{groupHeader}(\"{GetTypeDisplayName(GetFieldType(group[0].name))}\")]");
+                }
+                foreach (Transform child in group)
+                {
+                    string visibility = GetFieldVisible(child.name);
+                    string typeName = GetFieldType(child.name);
+                    string fieldName = GetBindFieldName(child.name);
+                    if (bindMode == BindMode.Runtime)
+                    {
+                        // 运行时绑定：字段不序列化，由 BindComponents() 在运行时查找赋值
+                        fieldLines.Add(string.Format("{0} {1} {2};", visibility, typeName, fieldName));
+                    }
+                    else
+                    {
+                        // 引用赋值 / 两者兼有：序列化字段，编辑器填充引用（Both 的运行时兜底见 BindComponents）
+                        fieldLines.Add(string.Format("[SerializeField] {0} {1} {2} = null;", visibility, typeName, fieldName));
+                    }
                 }
             }
 
@@ -493,6 +547,11 @@ namespace NuoYan.ScriptBinder
             gen.AppendLine("{");
             foreach (var line in fieldLines)
             {
+                if (line.Length == 0)
+                {
+                    gen.AppendLine(); // 分组之间的空行不补缩进，避免行尾空白
+                    continue;
+                }
                 gen.Append(bodyPad);
                 gen.AppendLine(line);
             }
@@ -511,7 +570,7 @@ namespace NuoYan.ScriptBinder
             logic.Append(classPad);
             logic.AppendLine("/// <summary>");
             logic.Append(classPad);
-            logic.AppendLine("/// 只会在第一次生成时创建，之后不会覆盖，请在此文件中写逻辑代码");
+            logic.AppendLine("/// " + LocalizationConstant.Get("Gen.LogicSummary"));
             logic.Append(classPad);
             logic.AppendLine("/// </summary>");
             logic.Append(classPad);
@@ -545,14 +604,15 @@ namespace NuoYan.ScriptBinder
             }
 
             // 切换布局 / 改过生成文件夹后，旧位置可能残留同名生成文件 → 与本次生成构成重复定义（CS0101）
-            bool changed = WarnStaleGeneratedFiles(fileMode, className, basePath);
+            WarnStaleGeneratedFiles(fileMode, className, basePath);
 
-            changed |= WriteIfDifferent(basePath + ".cs", gen.ToString());
+            // 直接写盘（不比对内容）：调用方按"每轮生成都可能有变化"来安排编译等待，
+            // 同时文件 mtime 始终反映"最后一次生成时间"。
+            File.WriteAllText(basePath + ".cs", gen.ToString());
             // 逻辑文件只在首次生成时创建，之后不覆盖（开发者手写的逻辑不能丢）
             if (!File.Exists(basePath + ".Logic.cs"))
             {
                 File.WriteAllText(basePath + ".Logic.cs", logic.ToString());
-                changed = true;
             }
             RememberGenPath(className, basePath);
 
@@ -560,9 +620,8 @@ namespace NuoYan.ScriptBinder
             {
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
-                Debug.Log(string.Format("[ScriptBinder] 已生成绑定代码 <b>{0}</b>（等待编译后挂载/填引用）", className));
+                Debug.Log(LocalizationConstant.Format("Log.Generated", className));
             }
-            return changed;
         }
 
         // 生成目录写法归一：统一斜杠、去掉首尾斜杠（"Scripts/UI/" 与 "\\Scripts\\UI" 等价）
@@ -575,25 +634,46 @@ namespace NuoYan.ScriptBinder
             return dir.Replace('\\', '/').Trim().Trim('/');
         }
 
-        // 只在内容有变化时写盘：内容一致时不更新时间戳，避免 AssetDatabase 重导入引发无谓的整轮编译
-        private static bool WriteIfDifferent(string path, string text)
+        /// <summary>
+        /// 返回字段的分组顺序（生成弹窗预览与代码生成共用，保证“所见即所生成”）：
+        /// SameInAPart=false → 单组，即层级先序；true → 按类型分组（组间 = 类型首次出现顺序，组内保持先序）。
+        /// </summary>
+        public List<List<Transform>> CollectBindFieldGroups(GameObject go, bool sameInAPart)
         {
-            if (File.Exists(path))
+            var children = CollectBindChildren(go);
+            return sameInAPart ? GroupByFieldType(children) : SingleGroup(children);
+        }
+        private static List<List<Transform>> SingleGroup(List<Transform> children)
+        {
+            return new List<List<Transform>> { children };
+        }
+
+        /// <summary>
+        /// 按字段类型表达式（BindRule.Type）分组。
+        /// 组间顺序 = 该类型首次出现的先后顺序（与层级先序一致，读起来和节点树同序）；
+        /// 组内保持先序，因此组内字段的相对顺序不变。
+        /// </summary>
+        private List<List<Transform>> GroupByFieldType(List<Transform> children)
+        {
+            var order = new List<string>();
+            var map = new Dictionary<string, List<Transform>>();
+            foreach (var child in children)
             {
-                try
+                var typeName = GetFieldType(child.name);
+                if (!map.TryGetValue(typeName, out var list))
                 {
-                    if (File.ReadAllText(path) == text)
-                    {
-                        return false;
-                    }
+                    list = new List<Transform>();
+                    map[typeName] = list;
+                    order.Add(typeName);
                 }
-                catch (Exception)
-                {
-                    // 读取失败（如被占用）按“需要写入”处理
-                }
+                list.Add(child);
             }
-            File.WriteAllText(path, text);
-            return true;
+            var groups = new List<List<Transform>>();
+            foreach (var key in order)
+            {
+                groups.Add(map[key]);
+            }
+            return groups;
         }
 
         // 绝对路径 → 相对 Assets 的正斜杠路径（用于日志与 EditorPrefs 记录）
@@ -621,10 +701,8 @@ namespace NuoYan.ScriptBinder
         /// 检测“另一种布局 / 上次生成位置”下残留的同名生成文件：它与本次生成的文件同名，
         /// 同时存在会直接导致 CS0101 重复定义编译失败。弹窗由用户决定是否删除，本工具不擅自删用户的文件。
         /// </summary>
-        /// <returns>是否真的删除了文件</returns>
-        private static bool WarnStaleGeneratedFiles(SaveFileMode fileMode, string className, string currentBasePath)
+        private static void WarnStaleGeneratedFiles(SaveFileMode fileMode, string className, string currentBasePath)
         {
-            bool removed = false;
             var currentDir = Path.GetDirectoryName(currentBasePath) ?? string.Empty;
             // 同一个生成根下的另一种布局：
             //   本次 FolderByFolder（root/类名/类名）→ 旧文件在上一层 root/类名
@@ -659,37 +737,29 @@ namespace NuoYan.ScriptBinder
                 }
 
                 var relCs = ToAssetRelativePath(stale) + ".cs";
-                string msg = string.Format(
-                    "在旧位置发现同名生成文件：\n\n{0}\n\n它与本次生成的文件同名，同时存在会导致 CS0101 重复定义、整个工程编译失败。\n\n是否删除该旧文件（含对应的 .Logic.cs 与 .meta）？",
-                    relCs);
+                string msg = LocalizationConstant.Format("Dialog.StaleFile", relCs);
                 if (!LooksToolGenerated(csFile))
                 {
-                    msg += "\n\n注意：该文件不含本工具的生成标记，可能不是本工具生成的，删除前请自行确认内容。";
+                    msg += LocalizationConstant.Get("Dialog.StaleFileNotToolGenerated");
                 }
-                if (EditorUtility.DisplayDialog("ScriptBinder - 发现旧位置残留文件", msg, "删除旧文件", "保留（我自己处理）"))
+                if (EditorUtility.DisplayDialog(LocalizationConstant.Get("Dialog.StaleFileTitle"), msg,
+                    LocalizationConstant.Get("Btn.DeleteOldFile"), LocalizationConstant.Get("Btn.KeepOldFile")))
                 {
-                    bool anyExisted = File.Exists(csFile) || File.Exists(csFile + ".meta")
-                                      || File.Exists(logicFile) || File.Exists(logicFile + ".meta");
                     // 用 & 而非 &&：删不掉也要把能删的都试一遍，再统一汇报
                     bool ok = TryDeleteFile(csFile) & TryDeleteFile(csFile + ".meta")
                               & TryDeleteFile(logicFile) & TryDeleteFile(logicFile + ".meta");
                     RemoveEmptyDir(Path.GetDirectoryName(stale), currentDir);
                     s_StaleKept.Remove(stale);
-                    // 只有真的删掉了东西才算“磁盘有变化”：删除失败时若仍上报变化，
-                    // 管线会等一轮永远不会到来的编译（FilesChanged=1 但 Unity 无可编译内容）
-                    removed |= anyExisted && ok;
                     if (ok)
                     {
-                        Debug.Log("[ScriptBinder] 已删除旧位置的同名生成文件：" + relCs);
+                        Debug.Log(LocalizationConstant.Format("Log.StaleFileDeleted", relCs));
                     }
                     else
                     {
-                        Debug.LogWarning("[ScriptBinder] 旧位置的同名生成文件未能全部删除：" + relCs +
-                                         "（可能被占用或只读）。该文件与本次生成的同名类会导致 CS0101 重复定义，请手动删除后重新绑定。");
+                        Debug.LogWarning(LocalizationConstant.Format("Log.StaleFileDeleteFailed", relCs));
                     }
                 }
             }
-            return removed;
         }
 
         // 生成文件头部带 “Auto generated code for xxx by ScriptBinder” 标记；用于删除前的安全提示
@@ -735,7 +805,7 @@ namespace NuoYan.ScriptBinder
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[ScriptBinder] 删除文件失败：" + path + "\n" + e.Message);
+                Debug.LogWarning(LocalizationConstant.Format("Log.DeleteFileFailed", path, e.Message));
                 return false;
             }
         }
@@ -769,7 +839,7 @@ namespace NuoYan.ScriptBinder
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[ScriptBinder] 清理空目录失败：" + dir + "\n" + e.Message);
+                Debug.LogWarning(LocalizationConstant.Format("Log.CleanEmptyDirFailed", dir, e.Message));
             }
         }
 
@@ -786,15 +856,15 @@ namespace NuoYan.ScriptBinder
             if (bindMode == BindMode.Runtime)
             {
                 gen.Append(pad);
-                gen.AppendLine("/// 运行时绑定：字段不序列化，运行时按节点路径查找组件并赋值。");
+                gen.AppendLine("/// " + LocalizationConstant.Get("Gen.BindSummary.Runtime"));
             }
             else
             {
                 gen.Append(pad);
-                gen.AppendLine("/// 运行时兜底：编辑器已填充的引用保持不变，仅对为 null 的字段按节点路径查找（适配预制体实例等缺失引用场景）。");
+                gen.AppendLine("/// " + LocalizationConstant.Get("Gen.BindSummary.Both"));
             }
             gen.Append(pad);
-            gen.AppendLine("/// 请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。");
+            gen.AppendLine("/// " + LocalizationConstant.Get("Gen.BindCallHint"));
             gen.Append(pad);
             gen.AppendLine("/// </summary>");
             gen.Append(pad);
@@ -890,14 +960,20 @@ namespace NuoYan.ScriptBinder
             return list;
         }
 
+        // 生成文件头部。注意：
+        //   - "Auto generated code for ... by ScriptBinder" 这一行是 LooksToolGenerated 用来识别“本工具生成”的标记，
+        //     三种语言下都保持英文原文，免得标记随语言变化而失效；
+        //   - Machine / Author 是结构化元信息，语言无关，也保持固定；
+        //   - 只有“请勿直接修改”那句是人类读的说明，跟随语言。
+        // 刻意不写生成时间：时间戳每次都不一样，会让"内容未变化就不重写"永远失效（每次绑定都重导入 + 域重载）。
+        // 生成内容必须只由"节点命名 + 规则 + 本次参数"决定，才谈得上可复现。要看某文件何时生成，看文件 mtime / git。
         private static void BuildHeader(StringBuilder sb, GameObject go)
         {
             sb.AppendLine("/// <summary>");
             sb.AppendLine("/// Auto generated code for " + go.name + " by ScriptBinder");
-            sb.AppendLine("/// Time: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine("/// Machine: " + Environment.MachineName);
             sb.AppendLine("/// Author: NuoYan");
-            sb.AppendLine("/// 此文件由工具自动生成，请勿直接修改");
+            sb.AppendLine("/// " + LocalizationConstant.Get("Gen.HeaderNoEdit"));
             sb.AppendLine("/// </summary>");
         }
 
@@ -932,3 +1008,4 @@ namespace NuoYan.ScriptBinder
 #endif
     }
 }
+#endif

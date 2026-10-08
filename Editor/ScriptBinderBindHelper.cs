@@ -27,6 +27,18 @@ namespace NuoYan.ScriptBinder
         private const string FilesChangedKey = "ScriptBinder.FilesChanged"; // 1=生成代码有变更、需要编译
         private const string LegacyKey = "ScriptBinder.PendingBind";        // 旧版本单任务键，启动时清理
 
+        /// <summary>
+        /// “字段分组（SameInAPart）”偏好的 EditorPrefs 键：这个选项没有资产级默认值，
+        /// 只有用户在生成弹窗里的选择，弹窗与菜单共用这一个来源（定义放在这里，避免两边各写一份字符串）。
+        /// </summary>
+        public const string SameInAPartPrefsKey = "ScriptBinder.SameInAPart";
+
+        /// <summary>读取上次在生成弹窗里选择的字段分组；从未选过时 false（不分组）。</summary>
+        public static bool SameInAPartPreference()
+        {
+            return EditorPrefs.GetInt(SameInAPartPrefsKey, 0) == 1;
+        }
+
         // 步骤 1（代码生成）在 StartBind 内同步完成，任务入队后从步骤 2 开始
         private enum BindStage { AwaitCompile = 2, Mount = 3, Bind = 4, Done = 5 }
 
@@ -115,7 +127,7 @@ namespace NuoYan.ScriptBinder
             }
             catch (Exception e)
             {
-                Debug.LogWarning("[ScriptBinder] 待处理任务解析失败，已清空：" + e.Message);
+                Debug.LogWarning(LocalizationConstant.Format("Log.TasksParseFailed", e.Message));
                 m_Tasks = new List<BindTask>();
                 EditorPrefs.DeleteKey(TasksKey);
             }
@@ -143,7 +155,8 @@ namespace NuoYan.ScriptBinder
         /// <param name="cussf">本次生成写入的目录（相对 Assets）；空白时用 BindRules.SavePath</param>
         /// <param name="saveFileMode">本次生成的文件布局；null 时用 BindRules.SaveFileMode</param>
         /// <param name="mode">绑定模式；null 时取 BindRules.DefaultMode</param>
-        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null)
+        /// <param name="sameInAPart">是否把相同类型的字段排布在一起（生成弹窗里的“字段分组”）；无资产级默认值，菜单路径传 SameInAPartPreference()</param>
+        public static void StartBind(List<GameObject> targets, string baseClass = "MonoBehaviour", List<string> extraUsings = null, string cusns = null, string cussf = null, SaveFileMode? saveFileMode = null, BindMode? mode = null, bool sameInAPart = false)
         {
             if (targets == null || targets.Count == 0)
             {
@@ -153,7 +166,7 @@ namespace NuoYan.ScriptBinder
             var rules = BindRules.Instance;
             if (rules == null)
             {
-                Debug.LogError("[ScriptBinder] 找不到 BindRules 配置，无法生成绑定代码。");
+                Debug.LogError(LocalizationConstant.Get("Log.NoBindRules"));
                 return;
             }
 
@@ -182,8 +195,8 @@ namespace NuoYan.ScriptBinder
             if (stageTargetsDirty)
             {
                 if (!EditorUtility.DisplayDialog("ScriptBinder",
-                    "当前 Prefab Stage 存在未保存的修改。\n\n若编译期间 Stage 被关闭，自动挂载会直接写回 .prefab 资产（基于已保存版本），未保存的修改可能丢失。\n\n建议先按 Ctrl+S 保存预制体再生成。",
-                    "仍然继续", "取消"))
+                    LocalizationConstant.Get("Dialog.PrefabStageDirty"),
+                    LocalizationConstant.Get("Btn.ContinueAnyway"), LocalizationConstant.Get("Btn.Cancel")))
                 {
                     return;
                 }
@@ -191,7 +204,6 @@ namespace NuoYan.ScriptBinder
 
             var created = new List<BindTask>();
             var seen = new HashSet<string>();
-            bool anyChanged = false;
             bool anyGenerated = false;
             foreach (var go in targets)
             {
@@ -202,27 +214,26 @@ namespace NuoYan.ScriptBinder
                 string name = go.name;
                 if (!IsValidClassName(name))
                 {
-                    Debug.LogWarning("[ScriptBinder] 目标名 <b>" + name + "</b> 不是合法类名，已跳过（请先重命名 GameObject）。");
+                    Debug.LogWarning(LocalizationConstant.Format("Log.InvalidClassName", name));
                     continue;
                 }
                 if (!seen.Add(name))
                 {
-                    Debug.LogWarning("[ScriptBinder] 同名目标 <b>" + name + "</b> 已跳过：同名脚本只生成一次，避免相互覆盖。");
+                    Debug.LogWarning(LocalizationConstant.Format("Log.DuplicateTarget", name));
                     continue;
                 }
 
                 var task = Capture(go, GenDirOf(fileMode, genRoot, name));
                 task.mode = (int)bindMode;
 
-                // —— 步骤 1/4：代码生成（内部按内容比对，无变化时不触发重编译）——
+                // —— 步骤 1/4：代码生成（每轮都写盘，随后统一编译）——
                 string rel = RelScriptPath(task);
-                bool changed = rules.GenerateBindCode(go, baseClass, extraUsings, false, cusns, cussf, saveFileMode, bindMode);
-                anyChanged |= changed;
+                rules.GenerateBindCode(go, baseClass, extraUsings, false, cusns, cussf, saveFileMode, bindMode, sameInAPart);
                 anyGenerated = true;
 
                 int fieldCount = rules.CollectBindChildren(go).Count;
-                Debug.Log(string.Format("[ScriptBinder] [1/4 代码生成] <b>{0}</b>：{1} 个绑定字段（{2}）→ {3}{4}",
-                    name, fieldCount, BindModeLabel(bindMode), rel, changed ? string.Empty : "（内容未变化，无需重新编译）"));
+                Debug.Log(LocalizationConstant.Format("Log.Step1Generated",
+                    name, fieldCount, BindModeLabel(bindMode), rel));
                 created.Add(task);
             }
             if (!anyGenerated)
@@ -236,18 +247,16 @@ namespace NuoYan.ScriptBinder
                 m_Tasks.RemoveAll(x => x.className == t.className && x.stage < (int)BindStage.Done);
             }
             m_Tasks.AddRange(created);
-            if (anyChanged)
-            {
-                EditorPrefs.SetInt(FilesChangedKey, 1);
-                EditorPrefs.SetInt(CompileStateKey, 0); // 新一轮变更需要新一轮编译
-            }
+            // 每轮生成都写了盘，所以总按“需要一轮新编译”处理：绝不用编译前的旧类型提前挂载（否则新字段会漏填）
+            EditorPrefs.SetInt(FilesChangedKey, 1);
+            EditorPrefs.SetInt(CompileStateKey, 0);
             PersistTasks();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh(); // 整批只触发一次编译
             m_Tick = 0;
             m_GateLogged = false;
-            Debug.Log("[ScriptBinder] [2/4 等待编译] 已登记 " + created.Count + " 个任务（" + BindModeLabel(bindMode) + "），编译完成后自动挂载组件并填充引用。");
+            Debug.Log(LocalizationConstant.Format("Log.Step2Queued", created.Count, BindModeLabel(bindMode)));
             EditorApplication.delayCall += Flush;
         }
 
@@ -313,7 +322,7 @@ namespace NuoYan.ScriptBinder
             if (EditorApplication.isCompiling)
             {
                 EditorPrefs.SetInt(CompileStateKey, 1);
-                EditorUtility.DisplayProgressBar("ScriptBinder", "步骤 2/4：等待 Unity 编译完成…", 0.35f);
+                EditorUtility.DisplayProgressBar("ScriptBinder", LocalizationConstant.Get("Progress.WaitCompile"), 0.35f);
                 EditorApplication.delayCall += Flush;
                 return;
             }
@@ -382,7 +391,7 @@ namespace NuoYan.ScriptBinder
                     EditorUtility.ClearProgressBar();
                     m_Tick = 0;
                     m_GateLogged = false;
-                    Debug.Log("[ScriptBinder] 绑定管线全部完成。");
+                    Debug.Log(LocalizationConstant.Get("Log.PipelineDone"));
                     return;
                 }
             }
@@ -421,8 +430,7 @@ namespace NuoYan.ScriptBinder
                 if (m_WarnCompileFail % 400 == 1)
                 {
                     EditorUtility.ClearProgressBar();
-                    Debug.LogWarning("[ScriptBinder] [2/4 编译] 编译结束后未检测到域重载（可能编译失败）。\n" +
-                                     "请查看 Console 中的编译错误；任务已保留，修复后会自动继续。");
+                    Debug.LogWarning(LocalizationConstant.Get("Log.Step2CompileEnded"));
                 }
                 return false;
             }
@@ -433,7 +441,7 @@ namespace NuoYan.ScriptBinder
                 if (m_WarnCompileIdle % 400 == 1)
                 {
                     EditorUtility.ClearProgressBar();
-                    Debug.LogWarning("[ScriptBinder] [2/4 编译] 写入生成代码后编译迟迟未开始，仍在等待…（任务已保留）");
+                    Debug.LogWarning(LocalizationConstant.Get("Log.Step2CompileIdle"));
                 }
                 return false;
             }
@@ -445,8 +453,7 @@ namespace NuoYan.ScriptBinder
                 if (m_WarnCompileFail % 400 == 1)
                 {
                     EditorUtility.ClearProgressBar();
-                    Debug.LogWarning(string.Format("[ScriptBinder] [2/4 编译] 无法解析编译后的类型 <b>{0}</b>" +
-                                                   "（可能编译失败或生成文件未导入）。请检查 Console；任务已保留，编译成功后自动继续。",
+                    Debug.LogWarning(LocalizationConstant.Format("Log.Step2TypeUnresolved",
                         t.className));
                 }
                 return false;
@@ -456,7 +463,7 @@ namespace NuoYan.ScriptBinder
             {
                 m_GateLogged = true;
                 EditorUtility.ClearProgressBar();
-                Debug.Log("[ScriptBinder] [2/4 编译] 编译完成，开始步骤 3/4 挂载组件…");
+                Debug.Log(LocalizationConstant.Get("Log.Step2Compiled"));
             }
             return true;
         }
@@ -471,9 +478,7 @@ namespace NuoYan.ScriptBinder
                 if (m_WarnTarget % 300 == 1)
                 {
                     EditorUtility.ClearProgressBar();
-                    Debug.LogWarning("[ScriptBinder] [3/4 挂载] 目标未定位：" + TargetDesc(t) + "\n" +
-                                     "场景对象需位于已打开的对应场景中；预制体无需打开 Stage（会自动写回资产）。" +
-                                     "任务已保留，目标可见后自动继续；也可用菜单 [ScriptBinder/步骤 3：挂载组件（选中）] 手动挂载。");
+                    Debug.LogWarning(LocalizationConstant.Format("Log.Step3TargetMissing", TargetDesc(t)));
                 }
                 return false;
             }
@@ -504,12 +509,12 @@ namespace NuoYan.ScriptBinder
             }
             if (comp == null)
             {
-                Debug.LogWarning("[ScriptBinder] [3/4 挂载] 向 <b>" + go.name + "</b> 添加组件 " + type.Name + " 失败。");
+                Debug.LogWarning(LocalizationConstant.Format("Log.Step3AddFailed", go.name, type.Name));
                 return false;
             }
             t.live = go;
-            Debug.Log(string.Format("[ScriptBinder] [3/4 挂载] 已{0}组件 <b>{1}</b> 到 <b>{2}</b>",
-                existing != null ? "复用" : "挂载", type.Name, go.name));
+            Debug.Log(LocalizationConstant.Format("Log.Step3Mounted",
+                existing != null ? LocalizationConstant.Get("Log.Step3Reuse") : LocalizationConstant.Get("Log.Step3Mount"), type.Name, go.name));
             return true;
         }
 
@@ -545,7 +550,7 @@ namespace NuoYan.ScriptBinder
             {
                 // 运行时绑定模式：字段不序列化，无需编辑器填充（由生成的 BindComponents() 在运行时赋值）
                 filled = 0;
-                modeNote = "（运行时绑定模式：无需编辑器填充）";
+                modeNote = LocalizationConstant.Get("Log.Step4NoEditorFill");
             }
             else
             {
@@ -564,12 +569,12 @@ namespace NuoYan.ScriptBinder
                     var stage = PrefabStageUtility.GetCurrentPrefabStage();
                     if (stage != null)
                     {
-                        Debug.Log("[ScriptBinder] [4/4 组件绑定] 已挂载到 Prefab Stage，请按 Ctrl+S 保存预制体：" + stage.assetPath);
+                        Debug.Log(LocalizationConstant.Format("Log.Step4StageSave", stage.assetPath));
                     }
                 }
             }
             t.live = null;
-            Debug.Log(string.Format("[ScriptBinder] [4/4 组件绑定] <b>{0}</b> 字段填充 {1}/{2}{3}", go.name, filled, total, modeNote));
+            Debug.Log(LocalizationConstant.Format("Log.Step4Filled", go.name, filled, total, modeNote));
             return true;
         }
 
@@ -628,8 +633,7 @@ namespace NuoYan.ScriptBinder
                 // 变体不能直接写回资产（会压平覆盖关系），必须进入 Stage
                 if (m_WarnTarget % 300 == 0)
                 {
-                    Debug.LogWarning("[ScriptBinder] [3/4 挂载] 预制体变体 " + t.assetPath +
-                                     " 不能直接写回资产，请双击进入 Prefab Stage（任务已保留，进入后自动继续）。");
+                    Debug.LogWarning(LocalizationConstant.Format("Log.VariantNoWriteback", t.assetPath));
                 }
                 m_WarnTarget++;
                 return null;
@@ -644,7 +648,7 @@ namespace NuoYan.ScriptBinder
             var go2 = FindByHierarchy(m_ContentsRoot, t.hierarchy);
             if (go2 == null)
             {
-                Debug.LogWarning("[ScriptBinder] [3/4 挂载] 预制体 " + t.assetPath + " 中找不到层级 " + t.hierarchy + "，请检查预制体结构。");
+                Debug.LogWarning(LocalizationConstant.Format("Log.HierarchyNotFound", t.assetPath, t.hierarchy));
                 SaveAndUnloadContents();
                 return null;
             }
@@ -660,7 +664,7 @@ namespace NuoYan.ScriptBinder
             try
             {
                 PrefabUtility.SaveAsPrefabAsset(m_ContentsRoot, m_ContentsPath);
-                Debug.Log("[ScriptBinder] [4/4 组件绑定] 已保存预制体资产：" + m_ContentsPath);
+                Debug.Log(LocalizationConstant.Format("Log.PrefabSaved", m_ContentsPath));
             }
             catch (Exception e)
             {
@@ -676,8 +680,8 @@ namespace NuoYan.ScriptBinder
 
         private static string TargetDesc(BindTask t)
         {
-            return t.kind == 1 ? ("预制体资产未定位:" + t.assetPath)
-                               : ("场景对象未定位:" + t.scenePath + " / " + t.hierarchy);
+            return t.kind == 1 ? LocalizationConstant.Format("Log.TargetDescPrefab", t.assetPath)
+                               : LocalizationConstant.Format("Log.TargetDescScene", t.scenePath, t.hierarchy);
         }
 
         // =====================================================================
@@ -762,14 +766,14 @@ namespace NuoYan.ScriptBinder
                 var prop = so.FindProperty(fieldName);
                 if (prop == null)
                 {
-                    Debug.LogWarning(string.Format("[ScriptBinder] {0} 上找不到序列化字段 {1}（来源节点：{2}），可能生成代码与当前规则不一致。",
+                    Debug.LogWarning(LocalizationConstant.Format("Log.FieldNotFound",
                         comp.GetType().Name, fieldName, child.name));
                     continue;
                 }
                 var value = ResolveBindValue(child.gameObject, fieldTypeName);
                 if (value == null)
                 {
-                    Debug.LogWarning(string.Format("[ScriptBinder] 子物体 {0} 上未找到 {1} 组件，字段 {2} 置空。",
+                    Debug.LogWarning(LocalizationConstant.Format("Log.ComponentNotFound",
                         child.name, fieldTypeName, fieldName));
                 }
                 prop.objectReferenceValue = value;
@@ -939,7 +943,7 @@ namespace NuoYan.ScriptBinder
             }
             if (list.Count == 0)
             {
-                Debug.Log("[ScriptBinder] 请先选中要绑定的 UI 根节点。");
+                Debug.Log(LocalizationConstant.Get("Log.NoSelection"));
             }
             return list;
         }
@@ -956,7 +960,8 @@ namespace NuoYan.ScriptBinder
             {
                 return;
             }
-            StartBind(gos, "MonoBehaviour", null);
+            // 分组没有资产级默认值，菜单沿用弹窗里记住的那个选择，避免两个入口生成出不同排布的脚本
+            StartBind(gos, "MonoBehaviour", null, sameInAPart: SameInAPartPreference());
         }
 
         [MenuItem("Tools/NuoYan/ScriptBinder/步骤 1：仅生成代码（选中）")]
@@ -980,7 +985,7 @@ namespace NuoYan.ScriptBinder
                 {
                     continue;
                 }
-                rules.GenerateBindCode(go, "MonoBehaviour", null, false);
+                rules.GenerateBindCode(go, "MonoBehaviour", null, false, sameInAPart: SameInAPartPreference());
                 any = true;
             }
             if (!any)
@@ -989,8 +994,7 @@ namespace NuoYan.ScriptBinder
             }
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            Debug.Log("[ScriptBinder] 步骤 1 完成：仅生成代码。\n" +
-                      "如需继续请等待编译完成后执行 [步骤 3：挂载组件（选中）] 和 [步骤 4：重新填充引用（选中）]，或直接用 [一键 生成→编译→挂载→绑定]。");
+            Debug.Log(LocalizationConstant.Get("Log.Step1Done"));
         }
 
         [MenuItem("Tools/NuoYan/ScriptBinder/步骤 3：挂载组件（选中，需已编译）")]
@@ -1010,8 +1014,7 @@ namespace NuoYan.ScriptBinder
                 var type = LoadTypeByName(go.name);
                 if (type == null)
                 {
-                    Debug.LogWarning("[ScriptBinder] [3/4 挂载] 未找到已编译类型 <b>" + go.name +
-                                     "</b>：请先执行步骤 1 生成代码并等待编译完成（检查 Console 编译错误）。");
+                    Debug.LogWarning(LocalizationConstant.Format("Log.MountTypeNotFound", go.name));
                     continue;
                 }
                 if (IsPrefabAssetSelection(go))
@@ -1021,8 +1024,7 @@ namespace NuoYan.ScriptBinder
                     var asset = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
                     if (asset != null && PrefabUtility.GetPrefabAssetType(asset) == PrefabAssetType.Variant)
                     {
-                        Debug.LogWarning("[ScriptBinder] [3/4 挂载] 预制体变体 " + assetPath +
-                                         " 不能直接写回资产，请双击进入 Prefab Stage 后挂载。");
+                        Debug.LogWarning(LocalizationConstant.Format("Log.VariantNoWritebackShort", assetPath));
                         continue;
                     }
                     var root = PrefabUtility.LoadPrefabContents(assetPath);
@@ -1033,7 +1035,7 @@ namespace NuoYan.ScriptBinder
                             root.AddComponent(type);
                         }
                         PrefabUtility.SaveAsPrefabAsset(root, assetPath);
-                        Debug.Log("[ScriptBinder] [3/4 挂载] 已向预制体资产挂载 <b>" + type.Name + "</b>：" + assetPath);
+                        Debug.Log(LocalizationConstant.Format("Log.MountedToPrefabAsset", type.Name, assetPath));
                     }
                     catch (Exception e)
                     {
@@ -1053,7 +1055,7 @@ namespace NuoYan.ScriptBinder
                 if (comp != null)
                 {
                     MarkDirty(go);
-                    Debug.Log("[ScriptBinder] [3/4 挂载] 已挂载组件 <b>" + type.Name + "</b> 到 <b>" + go.name + "</b>");
+                    Debug.Log(LocalizationConstant.Format("Log.MountedToTarget", type.Name, go.name));
                 }
             }
         }
@@ -1082,7 +1084,7 @@ namespace NuoYan.ScriptBinder
                     int total = rules != null ? rules.CollectBindChildren(go).Count : 0;
                     int filled = BindFields(go, comp);
                     MarkDirty(go);
-                    Debug.Log(string.Format("[ScriptBinder] [4/4 组件绑定] 已重新填充 <b>{0}</b> 的引用 {1}/{2}", go.name, filled, total));
+                    Debug.Log(LocalizationConstant.Format("Log.Refilled", go.name, filled, total));
                 }
             }
         }
@@ -1093,15 +1095,15 @@ namespace NuoYan.ScriptBinder
             LoadTasks();
             if (m_Tasks.Count == 0)
             {
-                Debug.Log("[ScriptBinder] 当前没有待处理任务。");
+                Debug.Log(LocalizationConstant.Get("Log.NoPendingTasks"));
                 return;
             }
             int cs = EditorPrefs.GetInt(CompileStateKey, 0);
             int fc = EditorPrefs.GetInt(FilesChangedKey, 0);
-            var lines = new List<string> { "[ScriptBinder] 待处理任务 " + m_Tasks.Count + " 个（编译状态：" + CompileStateName(cs) + (fc == 1 ? "，有待编译变更" : string.Empty) + "）：" };
+            var lines = new List<string> { LocalizationConstant.Format("Log.PendingTasksHeader", m_Tasks.Count, CompileStateName(cs), fc == 1 ? LocalizationConstant.Get("Log.HasPendingChanges") : string.Empty) };
             foreach (var t in m_Tasks)
             {
-                lines.Add("  - " + t.className + "（" + StageName(t.stage) + "）：" + TargetDesc(t));
+                lines.Add(LocalizationConstant.Format("Log.PendingTaskItem", t.className, StageName(t.stage), TargetDesc(t)));
             }
             Debug.Log(string.Join("\n", lines.ToArray()));
         }
@@ -1114,16 +1116,16 @@ namespace NuoYan.ScriptBinder
             EditorPrefs.DeleteKey(CompileStateKey);
             EditorPrefs.DeleteKey(FilesChangedKey);
             EditorUtility.ClearProgressBar();
-            Debug.Log("[ScriptBinder] 已清除全部待处理任务。");
+            Debug.Log(LocalizationConstant.Get("Log.Cleared"));
         }
 
         private static string BindModeLabel(BindMode mode)
         {
             switch (mode)
             {
-                case BindMode.Runtime: return "运行时绑定";
-                case BindMode.Both: return "两者兼有";
-                default: return "引用赋值";
+                case BindMode.Runtime: return LocalizationConstant.Get("Log.ModeLabel.Runtime");
+                case BindMode.Both: return LocalizationConstant.Get("Log.ModeLabel.Both");
+                default: return LocalizationConstant.Get("Log.ModeLabel.Reference");
             }
         }
 
@@ -1131,11 +1133,11 @@ namespace NuoYan.ScriptBinder
         {
             switch (stage)
             {
-                case (int)BindStage.AwaitCompile: return "2 等待编译";
-                case (int)BindStage.Mount: return "3 挂载组件";
-                case (int)BindStage.Bind: return "4 填充引用";
-                case (int)BindStage.Done: return "完成";
-                default: return "未知";
+                case (int)BindStage.AwaitCompile: return LocalizationConstant.Get("Log.Stage.AwaitCompile");
+                case (int)BindStage.Mount: return LocalizationConstant.Get("Log.Stage.Mount");
+                case (int)BindStage.Bind: return LocalizationConstant.Get("Log.Stage.Bind");
+                case (int)BindStage.Done: return LocalizationConstant.Get("Log.Stage.Done");
+                default: return LocalizationConstant.Get("Log.Stage.Unknown");
             }
         }
 
@@ -1143,9 +1145,9 @@ namespace NuoYan.ScriptBinder
         {
             switch (cs)
             {
-                case 1: return "编译中";
-                case 2: return "已编译";
-                default: return "未开始";
+                case 1: return LocalizationConstant.Get("Log.CompileState.Compiling");
+                case 2: return LocalizationConstant.Get("Log.CompileState.Compiled");
+                default: return LocalizationConstant.Get("Log.CompileState.NotStarted");
             }
         }
     }

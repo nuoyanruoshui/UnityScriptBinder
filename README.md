@@ -1,6 +1,8 @@
 # UnityScriptBinder（com.unityscriptbinder.nuoyan）
 
-> 版本：1.1.0 ｜ Unity：2021.3+（在 2021.3.44 上验证）｜ 授权：MIT
+> 版本：1.1.5 ｜ Unity：2021.3+（在 2021.3.44 上验证）｜ 授权：MIT
+
+[English](./README.en.md) | 中文
 
 UnityScriptBinder 是一个**脚本绑定（UI 自动挂载）工具**：为界面根节点一键生成与其 **GameObject 同名**的 `partial MonoBehaviour`，声明 UI 字段并自动挂载组件。支持两种赋值风格、三种模式：
 
@@ -98,6 +100,7 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
    - **命名空间**：本次生成写入的命名空间（默认取 `BindRules.Namespace`，留空即回退该默认值）；填非法标识符会实时标红并拦截"确定生成"；
    - **生成文件夹**：本次生成写入的目录，相对 `Assets`（默认取 `BindRules.SavePath`，留空即回退该默认值）。点右侧 `...` 可选择目录，**只接受 Assets 内的路径**；
    - **绑定模式**下拉框：引用赋值 / 运行时绑定 / 两者兼有（默认取 `BindRules.DefaultMode`，选择会被记住）；
+   - **字段分组**开关：勾选后把**相同类型的字段排布到一起**，每组加 `[Header("短类型名")]`（详见"字段分组"）。它没有资产级默认值，选择会被记住；分步菜单（`一键` / `步骤 1`）沿用这个记住的选择，避免两个入口生成出不同排布的脚本；
    - **生成文件模式**下拉框：`FileByFile` 全部文件平铺在生成文件夹里 / `FolderByFolder` 每个类建一个同名子文件夹（默认取 `BindRules.SaveFileMode`，选择会被记住）。下方会实时显示"生成路径：`Assets/.../类名.cs`"，两项差异一眼可见；
    - **自定义父类**输入框：留空 = 不继承自定义父类（默认继承 `MonoBehaviour`）。填写**简单类名**即可（如 `MyPanelBase`）：工具会自动解析类型，与生成文件**同命名空间**时直接用简单名，**跨命名空间时自动在文件头补 `using <父类命名空间>;`**；也可以直接写带命名空间的全名（如 `GameLogic.MyPanelBase`）。注意该父类需自身继承自 `MonoBehaviour` 才能挂载为组件。输入时会**实时解析校验**：类不存在、或不是 `MonoBehaviour` 派生类会给出错误提示，"确定生成"也会被拦截；
    - **目标预览**：每个选中目标是一个 Foldout（默认展开第一个），展开后列出该目标将要绑定的每个字段，可先确认命名规则是否正确再生成。
@@ -119,6 +122,7 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 | `步骤 3：挂载组件（选中，需已编译）` | 只把同名组件挂到选中的节点 |
 | `步骤 4：重新填充引用（选中）` | 只重填字段引用（不重新生成）|
 | `查看待处理任务` / `清除待处理任务` | 查看 / 清空排队中的绑定任务 |
+| `校验多语言文案（自检）` | 检查中/英/日三个词典的键与 `{0}` 占位符是否一致（详见"多语言"）|
 
 ### 绑定模式（引用赋值 / 运行时绑定 / 两者兼有）
 
@@ -231,6 +235,7 @@ namespace GameLogic
 |------|------|
 | `Namespace` | 生成代码的命名空间（默认 `GameLogic`）；生成弹窗内可临时覆盖并记住 |
 | `SavePath`  | 生成脚本目录，相对 `Assets/`（默认 `Scripts/UI`；有 Odin 时显示文件夹选择器）；生成弹窗内可临时覆盖并记住 |
+| `DisplayLanguage` | 插件界面 / 控制台日志 / 生成代码注释的语言：`English`（默认）/ `Chinese` / `Japanese`（详见"多语言"）|
 | `DefaultMode` | 默认绑定模式：`Reference` 引用赋值 / `Runtime` 运行时绑定 / `Both` 两者兼有（生成弹窗内可临时切换并记住）|
 | `SaveFileMode` | 默认文件布局：`FileByFile` 全部文件平铺在 `SavePath` 里 / `FolderByFolder` 每个类建一个同名子文件夹（生成弹窗内可临时切换并记住）|
 | `BindTypes` | 类型目录：编辑 `Rules.Type` 时的下拉候选（**需 Odin**）。内置 12 个常用类型；自定义组件把全名加进来即可下拉选用（`Type` 手填不依赖此目录）|
@@ -243,6 +248,67 @@ namespace GameLogic
 
 ---
 
+## 多语言（中 / 英 / 日）
+
+插件界面、控制台日志、生成代码里的注释都支持 **中文 / English / 日本語**，在 `BindRules` 资产的 **`DisplayLanguage`** 字段里切换（装了 Odin 时是 `[EnumToggleButtons]` 三连按钮；没装 Odin 时是"语言"下拉，选项按当前语言显示为 `英文 / 中文 / 日文` 之类）。改完立即生效，无需重启。
+
+**默认是 `English`** —— 从旧版本升级上来时，资产里这个字段为空 / 未设置，界面会先变成英文，需要手动选一次中文。
+
+覆盖范围：
+
+| 位置 | 是否跟随语言 |
+|------|-------------|
+| 生成弹窗的字段名 / 按钮 / 提示、Inspector 的 `Bind Script` 按钮 | ✅ |
+| 所有 `DisplayDialog` 确认框、进度条文字 | ✅ |
+| 控制台日志与警告（`[1/4 代码生成]` 等分步日志、失败与警告提示）| ✅ |
+| `BindRules` 资产字段的 Tooltip | ✅（**仅非 Odin 路径**，见下方限制）|
+| 生成到工程的代码注释（`BindComponents` 摘要、`.Logic.cs` 说明、"请勿直接修改"）| ✅（**跟生成时的语言**，切语言后重新绑定才会刷新）|
+| `Tools/NuoYan/ScriptBinder/*` 菜单项名称 | ❌ 见下方限制 |
+| 生成的**代码本身**（类名、字段名、`[Header]`、`[SerializeField]`、文件头里的 `Auto generated ... by ScriptBinder` / `Time` / `Machine`）| ❌ 固定英文 |
+
+**语言表的自检**：`Tools/NuoYan/ScriptBinder/校验多语言文案（自检）` 会检查三个语种的**键集合是否一致**、**`{0}` 占位符是否对齐**，不一致时把每条问题打到 Console。新增 / 修改文案后建议跑一次 —— 漏翻的键不会报错，只会静默回退（见下）。
+
+**加一种语言 / 加一条文案**：编辑 `Editor/LocalizationConstant.cs` 里的三个 `Dictionary<string,string>`（键名约定见该文件头部注释：`Mode.*` / `Field.*` / `Dialog.*` / `Log.*` / `Gen.*` 等）。查表用 `LocalizationConstant.Get("Key")`，需要 `string.Format` 的用 `LocalizationConstant.Format("Key", 参数…)`。**缺键时的回退顺序是：调用方给的 fallback → 键名本身**（所以漏翻不会崩，但界面上会直接显示键名，一眼看得出来）。
+
+**两处无法本地化（Unity 的硬限制）**：
+
+- **菜单项名称**：`[MenuItem("...")]` 的路径是 C# 特性参数，必须是**编译期常量**，而 Unity 在 2021.3 没有公开的"运行时注册 Tools 菜单"API，所以 6 个菜单项名称固定为中文。菜单**点开后的日志反馈**跟随语言，日志里引用菜单时用的也是真实的中文菜单名（翻译了反而照不到）。
+- **装了 Odin 时的资产 Tooltip**：`[Tooltip]` 同样是特性常量。没装 Odin 时由 `BindRulesEditor`（自定义 Inspector）画成多语言；装了 Odin 时 Odin 接管绘制，Tooltip 保持特性里的固定文案。
+
+---
+
+## 字段分组
+
+生成弹窗里勾上**字段分组**后，生成的字段会按**类型**重新排布：相同类型的字段连续放在一起，每组前面加一条 `[Header("短类型名")]`，在 Inspector 里就是一组一组的折叠标题。
+
+这个开关没有资产级默认值，只有弹窗里的选择（记在 `EditorPrefs`，按工程隔离）；代码里对应的参数名是 `sameInAPart`。
+
+- **组间顺序** = 该类型**首次出现**的先后顺序（与层级先序一致，读起来和节点树同序）；**组内**保持层级先序，因此组内字段的相对顺序不变。
+- **分组键**是 `BindRule.Type` 的原文（`UnityEngine.UI.Image` 与 `TMPro.TMP_Text` 是两个组；若两条规则指向同一个类型，则合并为一组）。Header 文本取短类型名：`Image` / `Button` / `TMP_Text` / `GameObject` …
+- **Runtime 模式只排序、不加 Header**：该模式字段不序列化，Inspector 里根本没有这个字段，`[Header]` 是无效特性。
+- 生成弹窗的字段预览与生成结果**共用同一套分组**（分组时预览里也会显示 `[Header(...)]` 行），保持"所见即所生成"。
+- 只影响**字段声明的排布**；`BindComponents()` 的赋值顺序与编辑器填充顺序（都按字段名定位）不受影响。
+
+层级先序为 `m_imgIcon → m_btnClose → m_tmpName → m_btnOK → m_imgBg` 时，勾上字段分组生成：
+
+```csharp
+// 勾上"字段分组"时（HeroPanel 为例）
+[Header("Image")]
+[SerializeField] private Image m_ImgIcon = null;
+[SerializeField] private Image m_ImgBg = null;
+
+[Header("Button")]
+[SerializeField] private Button m_BtnClose = null;
+[SerializeField] private Button m_BtnOK = null;
+
+[Header("TMP_Text")]
+[SerializeField] private TMP_Text m_TmpName = null;
+```
+
+（**每一组**都会带 `[Header(...)]`，包括第一组，组间空一行。）
+
+---
+
 ## 目录结构
 
 ```
@@ -251,7 +317,9 @@ ScriptBinder/
 ├── LICENSE                      # MIT
 ├── Editor/
 │   ├── NuoYan.ScriptBinder.asmdef
-│   ├── BindRules.cs             # 规则资产 + 代码生成逻辑（含类型表达式解析 ResolveRuleType、文件布局与残留检测）
+│   ├── BindRules.cs             # 规则资产 + 代码生成逻辑（含类型表达式解析 ResolveRuleType、文件布局与残留检测、Language 枚举）
+│   ├── LocalizationConstant.cs  # 多语言文案表（中/英/日）+ 查表 Get/Format + 自检 Validate
+│   ├── BindRulesEditor.cs       # BindRules 的自定义 Inspector（仅非 Odin：把字段 Tooltip 画成多语言、语言用下拉）
 │   ├── ScriptBinder.cs          # Inspector “Bind Script” 按钮 + 生成对话框（命名空间 / 目录 / 模式 / 父类 / 字段预览）
 │   └── ScriptBinderBindHelper.cs# 四步绑定管线状态机（生成→编译→挂载→填充）＋分步菜单
 ```
@@ -267,8 +335,9 @@ ScriptBinder/
 ## 注意事项 / 限制
 
 - **绑定模式切换**：用另一模式重新点 Bind Script 即可整体切换——`Runtime → Reference/Both` 会重新生成 `[SerializeField]` 字段并自动填充；`Reference → Runtime` 后字段不再序列化，Inspector 中看不到引用属正常现象（由 `BindComponents()` 运行时赋值）。
+- **每次绑定都重写生成文件，并走一轮编译**：生成内容只由「节点命名 + 规则 + 本次参数」决定，文件头**不写生成时间**（只留 `Machine` / `Author` 两行固定元信息），所以同样的输入产出逐字节相同的文件、便于 diff；但**写盘本身每轮都发生**，因此每次绑定都会触发一次重导入与编译，文件 mtime 也就始终等于"最后一次生成时间"（想知道某个生成文件什么时候产出的，看 mtime 或 git 即可）。
 - **生成位置切换（目录 / 文件模式）会提示清理旧文件**：切换 `生成文件模式` 或改掉 `生成文件夹` 后，旧位置会残留一份**同名类**，两份同时存在会直接导致 `CS0101 重复定义`、整个工程编译失败。工具在写入新文件前会检测"另一布局 + 上次生成位置"，若发现残留会弹窗让你决定**删除旧文件 / 自行处理**（只删确认属于本工具的 `.cs` / `.Logic.cs` / `.meta`，目录为空时才一并清理）。选择"自行处理"后，本次编辑器会话内不再重复打扰。
-- **分步菜单用资产默认值**：弹窗里的命名空间 / 生成文件夹 / 文件模式是**本次生成**的覆盖；菜单 `一键 生成→编译→挂载→绑定` 与 `步骤 1` 没有弹窗，直接取 `BindRules` 资产上的 `Namespace` / `SavePath` / `SaveFileMode`。混用两种入口时注意两者不一致会产生不同位置的脚本。
+- **分步菜单用资产默认值**：弹窗里的命名空间 / 生成文件夹 / 文件模式是**本次生成**的覆盖；菜单 `一键 生成→编译→挂载→绑定` 与 `步骤 1` 没有弹窗，直接取 `BindRules` 资产上的 `Namespace` / `SavePath` / `SaveFileMode`（**字段分组是例外**：它没有资产级默认值，菜单沿用弹窗里记住的选择）。混用两种入口时注意两者不一致会产生不同位置的脚本。
 - **运行时查找依赖子物体命名/层级**：`BindComponents()` 的查找路径在生成时固化。若之后改动了子物体名字或层级结构，需要重新点一次 Bind Script 刷新路径；查找失败只会留下 null 字段（Runtime 模式）或由编辑器引用兜底（Both 模式），不会抛异常。
 - **同名覆盖**：`xxx.cs`（字段声明文件）每次绑定都会覆盖。若目标节点已有一个同名但**非工具生成**的脚本，会被覆盖，请先确认。
 - **类名 = GameObject 名**：节点名称需要是合法 C# 标识符（无空格 / 特殊字符）。
@@ -282,3 +351,4 @@ ScriptBinder/
 ## License
 
 [MIT](./LICENSE) © NuoYan
+

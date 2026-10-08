@@ -116,7 +116,7 @@ namespace NuoYan.ScriptBinder
             // 创建按钮
             var button = new Button(OnBindButtonClicked);
             button.name = "bind-ui-component-button";
-            button.text = "Bind Script";
+            button.text = LocalizationConstant.Get("Btn.BindScript");
             button.style.height = 24f;
             button.style.unityTextAlign = TextAnchor.MiddleCenter;
 
@@ -177,16 +177,19 @@ namespace NuoYan.ScriptBinder
         private const string BindSaveFileModePrefsKey = "ScriptBinder.SaveFileMode"; // 记住上次选择的生成文件模式
         private const string BindSaveFilePathPrefsKey = "ScriptBinder.SaveFilePath"; // 记住上次选择的生成文件路径
         private const string BindNameSpacePrefsKey = "ScriptBinder.NameSpace"; // 记住上次选择的命名空间
+        // 分组偏好的键放在 ScriptBinderBindHelper 上，弹窗与分步菜单共用同一份定义
+        private const string BindSameInAPartPrefsKey = ScriptBinderBindHelper.SameInAPartPrefsKey;
+
         private static readonly string[] BindModeLabels =
         {
-            "引用赋值（SerializeField，编辑器填充）",
-            "运行时绑定（BindComponents 手动调用）",
-            "两者兼有（编辑器填充 + 运行时兜底）",
+            LocalizationConstant.Get("Mode.Reference"),
+            LocalizationConstant.Get("Mode.Runtime"),
+            LocalizationConstant.Get("Mode.Both"),
         };
         private static readonly string[] SaveFileModeLabels =
         {
-            "将生成的文件全写入主文件夹中(FileByFile)",
-            "在主文件夹中创建同名文件夹写入文件(FolderByFolder)",
+            LocalizationConstant.Get("FileMode.FileByFile"),
+            LocalizationConstant.Get("FileMode.FolderByFolder"),
         };
         private List<GameObject> m_Targets;
         private string m_BaseClass = string.Empty;
@@ -199,6 +202,7 @@ namespace NuoYan.ScriptBinder
         private SaveFileMode m_SaveFileMode = SaveFileMode.FileByFile;
         private string m_SaveFilePath = string.Empty;
         private string m_NameSpace = string.Empty;
+        private bool m_SameInAPart = false;
 
 
         public static void ShowDialog(List<GameObject> targets)
@@ -251,7 +255,15 @@ namespace NuoYan.ScriptBinder
                 var rules = BindRules.Instance;
                 win.m_NameSpace = rules != null ? rules.Namespace : string.Empty;
             }
-            win.titleContent = new GUIContent("ScriptBinder - 生成绑定脚本");
+            if (EditorPrefs.HasKey(BindSameInAPartPrefsKey))
+            {
+                win.m_SameInAPart = EditorPrefs.GetInt(BindSameInAPartPrefsKey, 0) == 1;
+            }
+            else
+            {
+                win.m_SameInAPart = false;
+            }
+            win.titleContent = new GUIContent(LocalizationConstant.Get("Window.Title"));
             win.minSize = new Vector2(480f, 420f); // 新增命名空间/生成文件夹/文件模式行后有更多内容
             win.ShowModal();
         }
@@ -264,21 +276,21 @@ namespace NuoYan.ScriptBinder
                 return;
             }
 
-            EditorGUILayout.HelpBox("将按选中 GameObject 的名字生成同名脚本，自动执行 4 步：\n① 代码生成 → ② 等待编译 → ③ 挂载组件 → ④ 填充引用\n注意：请填写带命名空间的全路径，同名脚本会被【覆盖】！", MessageType.Warning);
+            EditorGUILayout.HelpBox(LocalizationConstant.Get("Hint.Main"), MessageType.Warning);
 
             EditorGUILayout.Space(8f);
-            m_NameSpace = EditorGUILayout.TextField("命名空间", m_NameSpace);
+            m_NameSpace = EditorGUILayout.TextField(LocalizationConstant.Get("Field.Namespace"), m_NameSpace);
             if (!string.IsNullOrWhiteSpace(m_NameSpace) && !IsValidNamespace(m_NameSpace))
             {
-                EditorGUILayout.HelpBox(string.Format("命名空间 {0} 不是合法的 C# 命名空间（每段需以字母或下划线开头，仅含字母/数字/下划线，用 . 分隔）。", m_NameSpace.Trim()), MessageType.Error);
+                EditorGUILayout.HelpBox(LocalizationConstant.Format("Hint.BadNamespace", m_NameSpace.Trim()), MessageType.Error);
             }
 
-            m_BaseClass = EditorGUILayout.TextField("自定义父类（可选）", m_BaseClass);
+            m_BaseClass = EditorGUILayout.TextField(LocalizationConstant.Get("Field.BaseClass"), m_BaseClass);
             DrawBaseClassHint();
 
             EditorGUILayout.Space(6f);
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("生成文件夹", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(LocalizationConstant.Get("Field.SaveFolder"), EditorStyles.boldLabel);
             m_SaveFilePath = EditorGUILayout.TextField(m_SaveFilePath);
             if (GUILayout.Button("...", GUILayout.Width(30f)))
             {
@@ -287,11 +299,17 @@ namespace NuoYan.ScriptBinder
             EditorGUILayout.EndHorizontal();
             if (!IsValidSavePath(m_SaveFilePath))
             {
-                EditorGUILayout.HelpBox("生成文件夹需为 Assets 下的相对路径（如 Scripts/UI），不能是绝对路径或含 ..。", MessageType.Error);
+                EditorGUILayout.HelpBox(LocalizationConstant.Get("Hint.BadSaveFolder"), MessageType.Error);
             }
+            EditorGUILayout.Space(6f);
+
+            m_SameInAPart = EditorGUILayout.Toggle(LocalizationConstant.Get("Field.SameInAPart"), m_SameInAPart);
+            EditorPrefs.SetInt(BindSameInAPartPrefsKey, m_SameInAPart ? 1 : 0);
+            EditorGUILayout.HelpBox(LocalizationConstant.Get("Tooltip.SameInAPart"), MessageType.Info);
+
 
             EditorGUILayout.Space(6f);
-            int modeIndex = EditorGUILayout.Popup("绑定模式", (int)m_BindMode, BindModeLabels);
+            int modeIndex = EditorGUILayout.Popup(LocalizationConstant.Get("Field.BindMode"), (int)m_BindMode, BindModeLabels);
             if (modeIndex != (int)m_BindMode)
             {
                 m_BindMode = (BindMode)modeIndex;
@@ -300,7 +318,7 @@ namespace NuoYan.ScriptBinder
             EditorGUILayout.HelpBox(GetBindModeHint(m_BindMode), MessageType.Info);
 
             EditorGUILayout.Space(6f);
-            int saveFileModeIndex = EditorGUILayout.Popup("生成文件模式", (int)m_SaveFileMode, SaveFileModeLabels);
+            int saveFileModeIndex = EditorGUILayout.Popup(LocalizationConstant.Get("Field.FileMode"), (int)m_SaveFileMode, SaveFileModeLabels);
             if (saveFileModeIndex != (int)m_SaveFileMode)
             {
                 m_SaveFileMode = (SaveFileMode)saveFileModeIndex;
@@ -315,11 +333,11 @@ namespace NuoYan.ScriptBinder
             using (new EditorGUILayout.HorizontalScope())
             {
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button("取消", GUILayout.Width(90f)))
+                if (GUILayout.Button(LocalizationConstant.Get("Btn.Cancel"), GUILayout.Width(90f)))
                 {
                     Close();
                 }
-                if (GUILayout.Button("确定生成", GUILayout.Width(100f)))
+                if (GUILayout.Button(LocalizationConstant.Get("Btn.Confirm"), GUILayout.Width(100f)))
                 {
                     Confirm();
                 }
@@ -345,12 +363,27 @@ namespace NuoYan.ScriptBinder
                 {
                     continue;
                 }
-                var children = rules != null ? rules.CollectBindChildren(go) : null;
-                int fieldCount = children != null ? children.Count : 0;
+                // 与代码生成共用同一套分组（SameInAPart），预览顺序 = 生成顺序；
+                // 分组时预览里会多出 [Header(...)] 行，算高度时要一并计入
+                var groups = rules != null ? rules.CollectBindFieldGroups(go, m_SameInAPart) : null;
+                bool withHeader = rules != null && m_SameInAPart && m_BindMode != BindMode.Runtime;
+                int fieldCount = 0;
+                int headerRows = 0;
+                if (groups != null)
+                {
+                    foreach (var group in groups)
+                    {
+                        fieldCount += group.Count;
+                        if (withHeader && group.Count > 0)
+                        {
+                            headerRows++;
+                        }
+                    }
+                }
 
                 m_TargetExpanded[i] = EditorGUILayout.Foldout(
                     m_TargetExpanded[i],
-                    string.Format("目标：{0}（{1} 个绑定字段）", go.name, fieldCount),
+                    LocalizationConstant.Format("Hint.TargetHeader", go.name, fieldCount),
                     true,
                     EditorStyles.foldoutHeader);
                 if (!m_TargetExpanded[i])
@@ -361,20 +394,35 @@ namespace NuoYan.ScriptBinder
                 // 下方 ScrollView：显示该目标需要绑定的每一个字段
                 using (new EditorGUI.IndentLevelScope(1))
                 {
-                    float innerHeight = Mathf.Clamp(24f + fieldCount * 18f, 44f, 220f);
+                    float innerHeight = Mathf.Clamp(24f + (fieldCount + headerRows) * 18f, 44f, 220f);
                     m_FieldScroll[i] = EditorGUILayout.BeginScrollView(m_FieldScroll[i], GUILayout.Height(innerHeight));
-                    if (fieldCount == 0 || rules == null)
+                    if (fieldCount == 0 || groups == null)
                     {
-                        EditorGUILayout.HelpBox("未发现可绑定字段：子物体命名需带可见性前缀（m_ / M_ / _），类型前缀见 BindRules 配置。", MessageType.Info);
+                        EditorGUILayout.HelpBox(LocalizationConstant.Get("Hint.NoFields"), MessageType.Info);
                     }
                     else
                     {
-                        foreach (var child in children)
+                        // Runtime 模式字段不序列化、Inspector 看不到，与生成一致地不显示 Header
+                        foreach (var group in groups)
                         {
-                            string fieldName = rules.GetBindFieldName(child.name);
-                            string visible = rules.GetBindFieldVisible(child.name);
-                            string typeName = rules.GetBindFieldTypeName(child.name);
-                            EditorGUILayout.LabelField(fieldName, visible + " " + BindRules.GetTypeDisplayName(typeName));
+                            if (group.Count == 0)
+                            {
+                                continue;
+                            }
+                            if (withHeader)
+                            {
+                                // 固定显示 [Header]：生成代码里写的就是 UnityEngine.HeaderAttribute，
+                                // 预览必须与生成结果一致（与是否装了 Odin 无关，[Title] 是 Odin 私有特性，不能写进生成代码）
+                                EditorGUILayout.LabelField(string.Format("[Header(\"{0}\")]",
+                                    BindRules.GetTypeDisplayName(rules.GetBindFieldTypeName(group[0].name))), EditorStyles.boldLabel);
+                            }
+                            foreach (var child in group)
+                            {
+                                string fieldName = rules.GetBindFieldName(child.name);
+                                string visible = rules.GetBindFieldVisible(child.name);
+                                string typeName = rules.GetBindFieldTypeName(child.name);
+                                EditorGUILayout.LabelField(fieldName, visible + " " + BindRules.GetTypeDisplayName(typeName));
+                            }
                         }
                     }
                     EditorGUILayout.EndScrollView();
@@ -389,11 +437,11 @@ namespace NuoYan.ScriptBinder
             switch (mode)
             {
                 case BindMode.Runtime:
-                    return "字段不序列化，生成 BindComponents() 运行时查找方法。\n请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。";
+                    return LocalizationConstant.Get("Mode.Hint.Runtime");
                 case BindMode.Both:
-                    return "字段序列化并编辑器填充；同时生成 BindComponents()，仅对为 null 的字段运行时查找（编辑器引用优先，实例缺失引用时兜底）。\n需要时在生命周期中调用一次 BindComponents()。";
+                    return LocalizationConstant.Get("Mode.Hint.Both");
                 default:
-                    return "字段以 [SerializeField] 声明，生成后由工具在编辑器内自动填充引用（运行时零查找开销）。";
+                    return LocalizationConstant.Get("Mode.Hint.Reference");
             }
         }
 
@@ -472,7 +520,7 @@ namespace NuoYan.ScriptBinder
             {
                 current = Application.dataPath; // 目录还不存在时从 Assets 根打开，避免面板打不开
             }
-            var picked = EditorUtility.OpenFolderPanel("选择生成文件夹（需位于 Assets 下）", current, string.Empty);
+            var picked = EditorUtility.OpenFolderPanel(LocalizationConstant.Get("Dialog.PickSaveFolder"), current, string.Empty);
             if (string.IsNullOrEmpty(picked))
             {
                 return;
@@ -481,7 +529,7 @@ namespace NuoYan.ScriptBinder
             var absPicked = picked.Replace('\\', '/').TrimEnd('/');
             if (!absPicked.StartsWith(absAssets + "/", StringComparison.OrdinalIgnoreCase))
             {
-                EditorUtility.DisplayDialog("ScriptBinder", "生成文件夹必须位于当前工程的 Assets 目录下：\n" + absAssets + "\n\n请重新选择。", "知道了");
+                EditorUtility.DisplayDialog("ScriptBinder", LocalizationConstant.Format("Dialog.SaveFolderOutsideAssets", absAssets), LocalizationConstant.Get("Btn.OK"));
                 return;
             }
             m_SaveFilePath = absPicked.Substring(absAssets.Length + 1);
@@ -492,12 +540,12 @@ namespace NuoYan.ScriptBinder
         {
             var first = m_Targets != null ? m_Targets.FirstOrDefault(g => g != null) : null;
             var root = EffectiveSavePath();
-            var cls = first != null ? first.name : "类名";
+            var cls = first != null ? first.name : LocalizationConstant.Get("Hint.ClassNameHolder");
             var tail = m_SaveFileMode == SaveFileMode.FolderByFolder ? cls + "/" + cls : cls;
             var path = string.IsNullOrEmpty(root) ? "Assets/" + tail : "Assets/" + root + "/" + tail;
-            var more = m_Targets != null && m_Targets.Count > 1 ? string.Format("（共 {0} 个目标，规则相同）", m_Targets.Count) : string.Empty;
-            EditorGUILayout.HelpBox(string.Format("生成路径：{0}.cs{1}\n命名空间：{2}\n（.Logic.cs 同目录，仅首次生成时创建，之后不覆盖）",
-                path, more, string.IsNullOrEmpty(EffectiveNamespace()) ? "（无）" : EffectiveNamespace()), MessageType.None);
+            var more = m_Targets != null && m_Targets.Count > 1 ? LocalizationConstant.Format("Hint.TargetCount", m_Targets.Count) : string.Empty;
+            EditorGUILayout.HelpBox(LocalizationConstant.Format("Hint.Output",
+                path, more, string.IsNullOrEmpty(EffectiveNamespace()) ? LocalizationConstant.Get("Hint.NoNamespace") : EffectiveNamespace()), MessageType.None);
         }
 
         // 根据输入实时反馈：留空默认 MonoBehaviour；填写则提示是否解析成功 / 是否可作为组件
@@ -505,7 +553,7 @@ namespace NuoYan.ScriptBinder
         {
             if (string.IsNullOrWhiteSpace(m_BaseClass))
             {
-                EditorGUILayout.HelpBox("留空：不继承自定义父类（默认继承 MonoBehaviour）", MessageType.Info);
+                EditorGUILayout.HelpBox(LocalizationConstant.Get("Hint.BaseClassEmpty"), MessageType.Info);
                 return;
             }
             var entered = m_BaseClass.Trim();
@@ -517,20 +565,20 @@ namespace NuoYan.ScriptBinder
 
             if (m_ResolvedBase == null)
             {
-                EditorGUILayout.HelpBox(string.Format("未找到父类：{0}\n请填写完整类名（含命名空间），或确认该类已编译。", entered), MessageType.Error);
+                EditorGUILayout.HelpBox(LocalizationConstant.Format("Hint.BaseClassNotFound", entered), MessageType.Error);
                 return;
             }
             if (!typeof(MonoBehaviour).IsAssignableFrom(m_ResolvedBase))
             {
-                EditorGUILayout.HelpBox(string.Format("父类 {0}（{1}）不是 MonoBehaviour 派生类，无法作为组件挂载。", entered, m_ResolvedBase.FullName), MessageType.Error);
+                EditorGUILayout.HelpBox(LocalizationConstant.Format("Hint.BaseClassNotMono", entered, m_ResolvedBase.FullName), MessageType.Error);
                 return;
             }
             var baseExpr = entered.IndexOf('.') >= 0 ? entered : m_ResolvedBase.Name;
             var extraNs = GetExtraBaseNamespaceUsing(entered);
             var first = m_Targets != null ? m_Targets.FirstOrDefault(g => g != null) : null;
-            string cls = first != null ? first.name : "类名";
-            EditorGUILayout.HelpBox(string.Format("将生成：public partial class {0} : {1}{2}",
-                cls, baseExpr, string.IsNullOrEmpty(extraNs) ? string.Empty : "\n自动补 using " + extraNs + ";"), MessageType.Info);
+            string cls = first != null ? first.name : LocalizationConstant.Get("Hint.ClassNameHolder");
+            EditorGUILayout.HelpBox(LocalizationConstant.Format("Hint.BaseClassOk",
+                cls, baseExpr, string.IsNullOrEmpty(extraNs) ? string.Empty : LocalizationConstant.Format("Hint.AutoUsing", extraNs)), MessageType.Info);
         }
 
         // 简单名父类且所在命名空间与生成文件的命名空间（弹窗可覆盖）不一致时，需要追加的 using 命名空间；否则返回 null
@@ -589,12 +637,12 @@ namespace NuoYan.ScriptBinder
             // 命名空间 / 生成文件夹先校验：它们会直接写进生成代码与磁盘路径，非法值不该放行
             if (!string.IsNullOrWhiteSpace(m_NameSpace) && !IsValidNamespace(m_NameSpace))
             {
-                EditorUtility.DisplayDialog("ScriptBinder", "命名空间 " + m_NameSpace.Trim() + " 不合法：\n每段需以字母或下划线开头，仅含字母 / 数字 / 下划线，用 . 分隔。\n\n留空表示回退 BindRules 资产里的默认命名空间。", "知道了");
+                EditorUtility.DisplayDialog("ScriptBinder", LocalizationConstant.Format("Dialog.NamespaceInvalid", m_NameSpace.Trim()), LocalizationConstant.Get("Btn.OK"));
                 return;
             }
             if (!IsValidSavePath(m_SaveFilePath))
             {
-                EditorUtility.DisplayDialog("ScriptBinder", "生成文件夹 " + m_SaveFilePath + " 不合法：\n需为 Assets 下的相对路径（如 Scripts/UI），不能是绝对路径或含 ..。\n\n留空表示回退 BindRules 资产里的 SavePath。", "知道了");
+                EditorUtility.DisplayDialog("ScriptBinder", LocalizationConstant.Format("Dialog.SaveFolderInvalid", m_SaveFilePath), LocalizationConstant.Get("Btn.OK"));
                 return;
             }
 
@@ -608,12 +656,12 @@ namespace NuoYan.ScriptBinder
                 }
                 if (m_ResolvedBase == null)
                 {
-                    EditorUtility.DisplayDialog("ScriptBinder", "找不到自定义父类：" + entered + "\n请填写完整类名（含命名空间），或确认该类已编译后再生成。", "知道了");
+                    EditorUtility.DisplayDialog("ScriptBinder", LocalizationConstant.Format("Dialog.BaseClassNotFound", entered), LocalizationConstant.Get("Btn.OK"));
                     return;
                 }
                 if (!typeof(MonoBehaviour).IsAssignableFrom(m_ResolvedBase))
                 {
-                    EditorUtility.DisplayDialog("ScriptBinder", "自定义父类 " + entered + "（" + m_ResolvedBase.FullName + "）必须继承自 MonoBehaviour，否则无法作为组件挂载。", "知道了");
+                    EditorUtility.DisplayDialog("ScriptBinder", LocalizationConstant.Format("Dialog.BaseClassNotMono", entered, m_ResolvedBase.FullName), LocalizationConstant.Get("Btn.OK"));
                     return;
                 }
             }
@@ -636,9 +684,10 @@ namespace NuoYan.ScriptBinder
             EditorPrefs.SetString(BindNameSpacePrefsKey, m_NameSpace == null ? string.Empty : m_NameSpace.Trim());
             EditorPrefs.SetString(BindSaveFilePathPrefsKey, m_SaveFilePath == null ? string.Empty : m_SaveFilePath.Trim());
             EditorPrefs.SetInt(BindSaveFileModePrefsKey, (int)m_SaveFileMode);
+            EditorPrefs.SetInt(BindSameInAPartPrefsKey, m_SameInAPart ? 1 : 0);
 
             // 完整四步管线：代码生成在 StartBind 内同步执行，编译/挂载/填充由管线自动推进
-            ScriptBinderBindHelper.StartBind(m_Targets, baseClass, extraUsings, m_NameSpace, m_SaveFilePath, m_SaveFileMode, m_BindMode);
+            ScriptBinderBindHelper.StartBind(m_Targets, baseClass, extraUsings, m_NameSpace, m_SaveFilePath, m_SaveFileMode, m_BindMode, m_SameInAPart);
             Close();
         }
     }
