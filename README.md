@@ -347,6 +347,11 @@ ScriptBinder/
 - **TMP**：`tmp` 前缀生成 `TMP_Text` 基类字段，可承接 `TextMeshProUGUI` / `TextMeshPro`，需工程装有 TextMeshPro。
 
 ---
+### 支持项目
+
+如果工具对您有帮助，欢迎支持项目发展：
+
+[☕ 请我喝杯咖啡](Donate.md)
 
 - 如果你有什么建议或意见，欢迎在 Issues 提出，或发送邮件至邮箱。
 - Gmail: nuoyanruoshui@gmail.com

@@ -350,6 +350,11 @@ Implementation notes:
 - **Prefab edit mode**: for a task bound inside a Stage, if Unity closes the Stage during recompilation the pipeline falls back to "write the `.prefab` asset directly" (based on the saved version); if the Stage is still open it mounts inside the Stage (preserving unsaved edits — press Ctrl+S to save the prefab afterwards). You are warned before generating when the Stage has unsaved changes. Selecting a `.prefab` asset in the Project window also works (the asset itself is written). **Prefab variants** cannot be written back directly — enter their Stage and bind there.
 - **TMP**: the `tmp` prefix generates a `TMP_Text` base-class field that accepts `TextMeshProUGUI` / `TextMeshPro`; TextMeshPro must be installed in the project.
 
+### Support Project
+
+If the tool is helpful to you, welcome to support project development
+
+[☕ Thank me a coffee](Donate.md)
 ---
 
 - If you have any suggestions or feedback, please open an issue or send an email to me.
