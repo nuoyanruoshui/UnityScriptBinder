@@ -697,9 +697,30 @@ namespace NuoYan.ScriptBinder
             EditorPrefs.SetString(GenPathPrefsPrefix + className, ToAssetRelativePath(absBasePath));
         }
 
+        // 路径规范化：统一分隔符 + 取全路径，用于判断"是不是同一个位置"。
+        // 见上面 staleCandidates 处的说明 —— 少了这层就会出现"自己和自己比却不相等"。
+        private static string CanonicalPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return string.Empty;
+            }
+            try
+            {
+                return Path.GetFullPath(path).Replace('\\', '/').TrimEnd('/');
+            }
+            catch (Exception)
+            {
+                return path.Replace('\\', '/').TrimEnd('/');
+            }
+        }
+
         /// <summary>
         /// 检测“另一种布局 / 上次生成位置”下残留的同名生成文件：它与本次生成的文件同名，
         /// 同时存在会直接导致 CS0101 重复定义编译失败。弹窗由用户决定是否删除，本工具不擅自删用户的文件。
+        ///
+        /// 只会删 .cs 与它的 .meta：**已存在的 .Logic.cs 一律不动**（可能含你手写的逻辑），
+        /// 它若残留会继续声明同名类，因此只在弹窗/日志里提示用户自行移走或删除。
         /// </summary>
         private static void WarnStaleGeneratedFiles(SaveFileMode fileMode, string className, string currentBasePath)
         {
@@ -716,7 +737,10 @@ namespace NuoYan.ScriptBinder
             if (!string.IsNullOrEmpty(lastRel))
             {
                 var lastAbs = Path.Combine(Application.dataPath, lastRel.Replace('/', Path.DirectorySeparatorChar));
-                if (!string.Equals(lastAbs, currentBasePath, StringComparison.OrdinalIgnoreCase))
+                // 必须规范化后再比：Unity 的 dataPath 用正斜杠、Path.Combine 又插反斜杠，
+                // 直接比字符串会把同一个目录判成两个 —— 那会让"当前位置"被当成"旧位置残留"，
+                // 每次都弹窗，点删除就会删掉当前正在用的 .cs（曾把用户的 .Logic.cs 一起删掉）。
+                if (!string.Equals(CanonicalPath(lastAbs), CanonicalPath(currentBasePath), StringComparison.OrdinalIgnoreCase))
                 {
                     staleCandidates.Add(lastAbs);
                 }
@@ -726,18 +750,32 @@ namespace NuoYan.ScriptBinder
             {
                 string csFile = stale + ".cs";
                 string logicFile = stale + ".Logic.cs";
-                if (!File.Exists(csFile) && !File.Exists(logicFile))
+                bool hasCs = File.Exists(csFile);
+                bool hasLogic = File.Exists(logicFile);
+                if (!hasCs && !hasLogic)
                 {
                     s_StaleKept.Remove(stale); // 文件已不在，下次真的出现时重新提示
                     continue;
                 }
                 if (!s_StaleKept.Add(stale))
                 {
-                    continue; // 本次会话已问过且用户选择保留，不再打扰
+                    continue; // 本次会话已提示过，不再打扰
+                }
+
+                if (!hasCs)
+                {
+                    // 只剩 .Logic.cs：本工具不碰它，但同名类仍在，只能提醒用户自己处理
+                    Debug.LogWarning(LocalizationConstant.Format("Log.StaleLogicOnly",
+                        ToAssetRelativePath(stale) + ".Logic.cs"));
+                    continue;
                 }
 
                 var relCs = ToAssetRelativePath(stale) + ".cs";
                 string msg = LocalizationConstant.Format("Dialog.StaleFile", relCs);
+                if (hasLogic)
+                {
+                    msg += LocalizationConstant.Get("Dialog.StaleFileLogicKept");
+                }
                 if (!LooksToolGenerated(csFile))
                 {
                     msg += LocalizationConstant.Get("Dialog.StaleFileNotToolGenerated");
@@ -745,9 +783,8 @@ namespace NuoYan.ScriptBinder
                 if (EditorUtility.DisplayDialog(LocalizationConstant.Get("Dialog.StaleFileTitle"), msg,
                     LocalizationConstant.Get("Btn.DeleteOldFile"), LocalizationConstant.Get("Btn.KeepOldFile")))
                 {
-                    // 用 & 而非 &&：删不掉也要把能删的都试一遍，再统一汇报
-                    bool ok = TryDeleteFile(csFile) & TryDeleteFile(csFile + ".meta")
-                              & TryDeleteFile(logicFile) & TryDeleteFile(logicFile + ".meta");
+                    // 只删 .cs 与它的 .meta：.Logic.cs 一个字节都不动
+                    bool ok = TryDeleteFile(csFile) & TryDeleteFile(csFile + ".meta");
                     RemoveEmptyDir(Path.GetDirectoryName(stale), currentDir);
                     s_StaleKept.Remove(stale);
                     if (ok)
@@ -928,13 +965,25 @@ namespace NuoYan.ScriptBinder
         // fileNs 必须传本次实际生效的命名空间（弹窗可覆盖资产默认值），否则会漏 using 或补多余的 using。
         private static List<string> CollectBindUsings(GameObject go, string fileNs)
         {
-            var list = new List<string> { "using UnityEngine;" };
+            var list = new List<string>
+            {
+                "using UnityEngine;",
+                #if ODIN_INSPECTOR
+                "using Sirenix.OdinInspector;"
+                #endif
+            };
             var rules = Instance;
             if (rules == null)
             {
                 return list;
             }
-            var added = new HashSet<string> { "using UnityEngine;" };
+            var added = new HashSet<string>
+            {
+                "using UnityEngine;" ,
+                #if ODIN_INSPECTOR
+                "using Sirenix.OdinInspector;"
+                #endif
+            };
             foreach (Transform child in rules.CollectBindChildren(go))
             {
                 string raw = rules.GetBindFieldTypeName(child.name);
