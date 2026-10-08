@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+#if !ODIN_INSPECTOR
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -69,4 +70,5 @@ namespace NuoYan.ScriptBinder
         }
     }
 }
+#endif
 #endif
