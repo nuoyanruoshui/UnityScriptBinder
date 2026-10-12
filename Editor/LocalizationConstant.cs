@@ -174,6 +174,9 @@ namespace NuoYan.ScriptBinder
             { "Gen.BindSummary.Runtime", "运行时绑定：字段不序列化，运行时按节点路径查找组件并赋值。" },
             { "Gen.BindSummary.Both", "运行时兜底：编辑器已填充的引用保持不变，仅对为 null 的字段按节点路径查找（适配预制体实例等缺失引用场景）。" },
             { "Gen.BindCallHint", "请在逻辑代码（.Logic.cs）的生命周期中调用一次：如 Awake / OnEnable / OnInit(userData)。" },
+            { "Gen.ValidateSummary", "运行时自检：绑定字段是否都已赋值。请在 Awake / OnEnable 里调用一次；Runtime / Both 模式需在 BindComponents() 之后调用，否则会把还没赋值的字段全报成缺失。缺失的字段会以 LogError 列出。" },
+            { "Gen.ValidateLog", "[ScriptBinder] '{0}' 的绑定字段缺失：{1}。{2}" },
+            { "Gen.ValidateHint", "这些节点需以 {0} 前缀命名（如 {1}）才能被 ScriptBinder 绑定。" },
         };
 
         public static readonly Dictionary<string, string> English = new Dictionary<string, string>()
@@ -314,6 +317,9 @@ namespace NuoYan.ScriptBinder
             { "Gen.BindSummary.Runtime", "Runtime binding: fields are not serialized; components are looked up by node path and assigned at runtime." },
             { "Gen.BindSummary.Both", "Runtime fallback: references already filled in the editor stay untouched; only null fields are looked up by node path (covers missing references such as prefab instances)." },
             { "Gen.BindCallHint", "Call it once from the lifecycle of your logic file (.Logic.cs): Awake / OnEnable / OnInit(userData)." },
+            { "Gen.ValidateSummary", "Runtime self check: are all bound fields assigned? Call it once from Awake / OnEnable; in Runtime / Both mode call it after BindComponents(), otherwise every field not yet assigned is reported as missing. Missing fields are listed with LogError." },
+            { "Gen.ValidateLog", "[ScriptBinder] '{0}' is missing bound fields: {1}. {2}" },
+            { "Gen.ValidateHint", "Those nodes must be named with the {0} prefix (e.g. {1}) for ScriptBinder to bind them." },
         };
 
         public static readonly Dictionary<string, string> Japanese = new Dictionary<string, string>()
@@ -454,6 +460,9 @@ namespace NuoYan.ScriptBinder
             { "Gen.BindSummary.Runtime", "ランタイムバインディング：フィールドはシリアライズされず、実行時にノードパスからコンポーネントを検索して代入します。" },
             { "Gen.BindSummary.Both", "実行時フォールバック：エディタで設定済みの参照はそのまま保持し、null のフィールドのみノードパスから検索します（プレハブインスタンスなど参照が欠けたケースに対応）。" },
             { "Gen.BindCallHint", "ロジックコード（.Logic.cs）のライフサイクルで1度だけ呼び出してください：Awake / OnEnable / OnInit(userData)。" },
+            { "Gen.ValidateSummary", "ランタイム自己チェック：バインドされたフィールドがすべて代入済みかを検証します。Awake / OnEnable で1度呼び出してください。Runtime / Both モードでは BindComponents() の後に呼ばないと、未代入のフィールドがすべて不足として報告されます。不足しているフィールドは LogError で出力されます。" },
+            { "Gen.ValidateLog", "[ScriptBinder] '{0}' のバインドフィールドが不足しています：{1}。{2}" },
+            { "Gen.ValidateHint", "これらのノードは {0} プレフィックス（例：{1}）で命名しないと ScriptBinder がバインドできません。" },
         };
 
         /// <summary>

@@ -140,6 +140,7 @@ Developers differ: some prefer `[SerializeField]` references dragged or filled i
 
 - The project-wide default lives on the `BindRules` asset (`DefaultMode`); the dialog's choice is remembered (`EditorPrefs`) and reused next time.
 - `BindComponents()` must be called once from your lifecycle (`Awake` / `OnEnable` / `OnInit(userData)`). The tool **does not generate an `Awake`** so it never conflicts with your own lifecycle.
+- **Runtime self check `ValidateBindings()`**: generated in all three modes. It collects the null bound fields with `nameof`, returns false and reports them in a single `LogError` (hinting that those nodes may be missing the visibility prefix, or were renamed / moved / removed — the prefixes and examples in that hint are **read from the actual rule tables in `BindRules`**, and only default to `m_` / `m_img`). Call it once from `Awake` / `OnEnable`; in Runtime / Both mode you **must** call it after `BindComponents()`, otherwise every field that is not assigned yet is reported as missing.
 - The runtime lookup path is the field child's hierarchy path relative to the root, produced by the same recursive collection rules as the editor fill, so fields and paths correspond one-to-one.
 
 What a Runtime / Both file looks like (`HeroPanel`):

@@ -560,6 +560,8 @@ namespace NuoYan.ScriptBinder
                 // Runtime / Both：追加运行时查找绑定的 BindComponents()
                 AppendBindComponents(gen, go.transform, bindMode, classLevel);
             }
+            // 运行时自检：三种模式都生成（Reference 模式的字段由编辑器填充，为 null 同样是漏挂/漏填）
+            AppendValidateBindings(gen, go.transform, classLevel);
             gen.Append(classPad);
             gen.AppendLine("}");
             CloseNamespace(gen, ns);
@@ -885,6 +887,7 @@ namespace NuoYan.ScriptBinder
         {
             var pad = Pad(classLevel + 1);
             var bodyPad = Pad(classLevel + 2);
+            var children = CollectBindChildren(root.gameObject);
 
             gen.AppendLine();
             gen.Append(pad);
@@ -908,7 +911,7 @@ namespace NuoYan.ScriptBinder
             gen.AppendLine("public void BindComponents()");
             gen.Append(pad);
             gen.AppendLine("{");
-            foreach (Transform child in CollectBindChildren(root.gameObject))
+            foreach (Transform child in children)
             {
                 string fieldName = GetBindFieldName(child.name);
                 string lookup = BuildRuntimeLookup(child, root, GetFieldType(child.name));
@@ -924,6 +927,110 @@ namespace NuoYan.ScriptBinder
             }
             gen.Append(pad);
             gen.AppendLine("}");
+
+        }
+
+        /// <summary>
+        /// 生成运行时自检 ValidateBindings()：把为 null 的绑定字段用 nameof 收集起来，
+        /// 汇总后打一条 LogError，便于运行时定位“哪些节点没绑上”。
+        /// 三种模式都生成 —— Reference 模式的字段由编辑器填充，为 null 同样说明漏挂 / 漏填。
+        /// 只查字段本身是否已赋值，刻意不查“路径还找不找得到节点”：Runtime 模式下字段就是由同一路径赋值的
+        /// （等价重复检查），Both 模式下路径失效本就被容忍（编辑器引用优先），查了反而误报。
+        /// </summary>
+        private void AppendValidateBindings(StringBuilder gen, Transform root, int classLevel)
+        {
+            var pad = Pad(classLevel + 1);
+            var bodyPad = Pad(classLevel + 2);
+            var innerPad = Pad(classLevel + 3);
+
+            gen.AppendLine();
+            gen.Append(pad);
+            gen.AppendLine("/// <summary>");
+            gen.Append(pad);
+            gen.AppendLine("/// " + LocalizationConstant.Get("Gen.ValidateSummary"));
+            gen.Append(pad);
+            gen.AppendLine("/// </summary>");
+            gen.Append(pad);
+            gen.AppendLine("public bool ValidateBindings()");
+            gen.Append(pad);
+            gen.AppendLine("{");
+            gen.Append(bodyPad);
+            gen.AppendLine("var missing = new System.Collections.Generic.List<string>();");
+            foreach (Transform child in CollectBindChildren(root.gameObject))
+            {
+                string fieldName = GetBindFieldName(child.name);
+                gen.Append(bodyPad);
+                gen.AppendLine(string.Format("if ({0} == null)", fieldName));
+                gen.Append(bodyPad);
+                gen.AppendLine("{");
+                gen.Append(innerPad);
+                gen.AppendLine(string.Format("missing.Add(nameof({0}));", fieldName));
+                gen.Append(bodyPad);
+                gen.AppendLine("}");
+            }
+            gen.Append(bodyPad);
+            gen.AppendLine("if (missing.Count > 0)");
+            gen.Append(bodyPad);
+            gen.AppendLine("{");
+            gen.Append(innerPad);
+            gen.AppendLine("Debug.LogError($\"" + BuildValidateLogMessage() + "\");");
+            gen.Append(bodyPad);
+            gen.AppendLine("}");
+            gen.Append(bodyPad);
+            gen.AppendLine("return missing.Count == 0;");
+            gen.Append(pad);
+            gen.AppendLine("}");
+        }
+
+        // 把 Gen.ValidateLog 文案拼成生成代码里插值字符串的内容：
+        // {0} → name，{1} → string.Join(", ", missing)。文案本身先转义，免得译者加了引号 / 反斜杠把生成代码写坏。
+        // 注意：文案里除 {0} {1} 之外不要再出现花括号（会与插值语法冲突，导致生成代码编译失败）。
+        // 把 Gen.ValidateLog 文案拼成生成代码里插值字符串的内容：
+        //   {0} → name，{1} → string.Join(", ", missing)（都是运行期 C# 表达式，不能转义）
+        //   {2} → 命名提示，由当前规则表现算（见 BuildNamingHint），作为普通文本要先转义
+        // 文案里除这些占位符外不要再出现花括号（会与插值语法冲突，导致生成代码编译失败）。
+        private string BuildValidateLogMessage()
+        {
+            string escapedHint = BuildNamingHint()
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"");
+            return LocalizationConstant.Get("Gen.ValidateLog")
+                .Replace("\\", "\\\\")
+                .Replace("\"", "\\\"")
+                .Replace("{0}", "{name}")
+                .Replace("{1}", "{string.Join(\", \", missing)}")
+                .Replace("{2}", escapedHint);
+        }
+
+        // 命名提示：从当前规则表里取真实前缀拼出来，不写死 m_img*/m_tmp*/m_btn* ——
+        // 使用者可能改过可见性前缀或类型前缀表，写死的示例会误导。
+        // {0} 用第一条可见性规则的前缀（默认 m_，即最常用的那个），{1} 用前三个类型前缀拼示例。
+        private string BuildNamingHint()
+        {
+            string vis = FieldVisibleRules != null && FieldVisibleRules.Count > 0
+                ? FieldVisibleRules[0].Prefix
+                : string.Empty;
+            var picks = new List<string>();
+            if (Rules != null)
+            {
+                foreach (var rule in Rules)
+                {
+                    if (picks.Count >= 3)
+                    {
+                        break;
+                    }
+                    if (rule == null || string.IsNullOrEmpty(rule.Prefix))
+                    {
+                        continue;
+                    }
+                    picks.Add(vis + rule.Prefix);
+                }
+            }
+            if (picks.Count == 0)
+            {
+                picks.Add(vis); // 规则表被清空时的兜底，至少把可见性前缀提示出来
+            }
+            return LocalizationConstant.Format("Gen.ValidateHint", vis, string.Join(" / ", picks.ToArray()));
         }
 
         // 单条运行时查找表达式：按相对根节点的路径 transform.Find(...)

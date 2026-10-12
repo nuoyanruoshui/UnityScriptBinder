@@ -136,6 +136,7 @@ https://github.com/nuoyanruoshui/UnityScriptBinder.git
 
 - 项目默认模式配置在 `BindRules` 资产（`DefaultMode`）；弹窗内的选择会被记住（EditorPrefs），下次沿用。
 - `BindComponents()` 需要开发者在生命周期中调用一次（如 `Awake` / `OnEnable` / `OnInit(userData)`）。工具**不自动生成 Awake**，避免与开发者自己的生命周期冲突。
+- **运行时自检 `ValidateBindings()`**：三种模式都会生成。它把为 null 的绑定字段用 `nameof` 收集起来，`return false` 并用一条 `LogError` 列出缺失项（提示这些节点是否漏了可见性前缀、或被改名 / 移动 / 移除；提示里的前缀与示例**取自 `BindRules` 的实际规则表**，默认才是 `m_` / `m_img` 那一套）。请在 `Awake` / `OnEnable` 里调用一次；Runtime / Both 模式**必须在 `BindComponents()` 之后**调用，否则会把还没赋值的字段全报成缺失。
 - 运行时查找路径 = 字段子物体相对根节点的层级路径，与编辑器填充共用同一套递归收集规则，字段与路径一一对应。
 
 运行时绑定 / 两者兼有模式生成的文件形态（`HeroPanel` 为例）：
