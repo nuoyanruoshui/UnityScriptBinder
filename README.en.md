@@ -251,37 +251,6 @@ Changes take effect for subsequent generations immediately; **references are wri
 
 Dialog preferences are stored in `EditorPrefs` (per project) and reused next time: **namespace / output folder / custom base class** are saved when you press "Generate" (cancelling does not change what was remembered), while the **bind mode / file layout** dropdowns are remembered the moment you change them.
 
----
-
-## Localization (en / ja / zh)
-
-The plugin UI, console logs and comments in the generated code all support **English / 中文 / 日本語**. Switch with the **`DisplayLanguage`** field on the `BindRules` asset (with Odin it is an `[EnumToggleButtons]` triple button; without Odin it is a **Language** dropdown whose options are shown in the current language). The change takes effect immediately, no restart needed.
-
-**The default is `English`** — when upgrading from an older version this field is unset in the asset, so the UI starts out in English until you pick a language.
-
-Coverage:
-
-| Location | Follows the language |
-|----------|----------------------|
-| Dialog field labels / buttons / hints, and the Inspector's `Bind Script` button | yes |
-| All confirmation dialogs and the progress bar text | yes |
-| Console logs and warnings (the `[1/4 generate]` step logs, failure and warning messages) | yes |
-| Tooltips of the `BindRules` asset fields | yes (**only without Odin**, see the limitations below) |
-| Comments in the generated code (`BindComponents` summary, `.Logic.cs` note, "do not edit directly") | yes (**as of generation time** — re-bind to refresh after switching language) |
-| `Tools/NuoYan/ScriptBinder/*` menu item names | no, see the limitations below |
-| The generated **code** itself (class name, field names, `[Header]`, `[SerializeField]`, the `Auto generated ... by ScriptBinder` / `Time` / `Machine` header lines) | no, fixed English |
-
-**Self check**: `Tools/NuoYan/ScriptBinder/Validate localization tables (self check)` verifies that the three languages have the **same key set** and **aligned `{0}` placeholders**, printing every problem to the Console. Run it after adding or editing strings — a missing translation does not throw, it silently falls back (see below).
-
-**Adding a language / a string**: edit the three `Dictionary<string,string>` in `Editor/LocalizationConstant.cs` (key naming conventions are documented at the top of that file: `Mode.*` / `Field.*` / `Dialog.*` / `Log.*` / `Gen.*` and so on). Look strings up with `LocalizationConstant.Get("Key")`, or with `LocalizationConstant.Format("Key", args...)` when `string.Format` is needed. **The fallback order for a missing key is: the caller's fallback → the key name itself**, so a missing translation never crashes — the UI just shows the raw key, which is easy to spot.
-
-**Two things cannot be localized (hard Unity limitations)**:
-
-- **Menu item names**: a `[MenuItem("...")]` path is a C# attribute argument and must be a **compile-time constant**, and Unity 2021.3 has no public API for registering Tools menu items at runtime, so the six menu items stay in Chinese. What they **log** follows the language.
-- **Asset tooltips with Odin installed**: `[Tooltip]` is likewise an attribute constant. Without Odin, `BindRulesEditor` (a custom Inspector) draws them in the selected language; with Odin installed Odin takes over the drawing and the tooltips keep the fixed text from the attributes.
-
----
-
 ## Field grouping
 
 With the **Group fields** toggle in the dialog checked, the generated fields are re-arranged **by type**: fields of the same type sit next to each other and each group is preceded by a `[Header("short type name")]`, which shows up in the Inspector as one collapsible title per group.
