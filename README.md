@@ -249,35 +249,6 @@ namespace GameLogic
 
 ---
 
-## 多语言（中 / 英 / 日）
-
-插件界面、控制台日志、生成代码里的注释都支持 **中文 / English / 日本語**，在 `BindRules` 资产的 **`DisplayLanguage`** 字段里切换（装了 Odin 时是 `[EnumToggleButtons]` 三连按钮；没装 Odin 时是"语言"下拉，选项按当前语言显示为 `英文 / 中文 / 日文` 之类）。改完立即生效，无需重启。
-
-**默认是 `English`** —— 从旧版本升级上来时，资产里这个字段为空 / 未设置，界面会先变成英文，需要手动选一次中文。
-
-覆盖范围：
-
-| 位置 | 是否跟随语言 |
-|------|-------------|
-| 生成弹窗的字段名 / 按钮 / 提示、Inspector 的 `Bind Script` 按钮 | ✅ |
-| 所有 `DisplayDialog` 确认框、进度条文字 | ✅ |
-| 控制台日志与警告（`[1/4 代码生成]` 等分步日志、失败与警告提示）| ✅ |
-| `BindRules` 资产字段的 Tooltip | ✅（**仅非 Odin 路径**，见下方限制）|
-| 生成到工程的代码注释（`BindComponents` 摘要、`.Logic.cs` 说明、"请勿直接修改"）| ✅（**跟生成时的语言**，切语言后重新绑定才会刷新）|
-| `Tools/NuoYan/ScriptBinder/*` 菜单项名称 | ❌ 见下方限制 |
-| 生成的**代码本身**（类名、字段名、`[Header]`、`[SerializeField]`、文件头里的 `Auto generated ... by ScriptBinder` / `Time` / `Machine`）| ❌ 固定英文 |
-
-**语言表的自检**：`Tools/NuoYan/ScriptBinder/校验多语言文案（自检）` 会检查三个语种的**键集合是否一致**、**`{0}` 占位符是否对齐**，不一致时把每条问题打到 Console。新增 / 修改文案后建议跑一次 —— 漏翻的键不会报错，只会静默回退（见下）。
-
-**加一种语言 / 加一条文案**：编辑 `Editor/LocalizationConstant.cs` 里的三个 `Dictionary<string,string>`（键名约定见该文件头部注释：`Mode.*` / `Field.*` / `Dialog.*` / `Log.*` / `Gen.*` 等）。查表用 `LocalizationConstant.Get("Key")`，需要 `string.Format` 的用 `LocalizationConstant.Format("Key", 参数…)`。**缺键时的回退顺序是：调用方给的 fallback → 键名本身**（所以漏翻不会崩，但界面上会直接显示键名，一眼看得出来）。
-
-**两处无法本地化（Unity 的硬限制）**：
-
-- **菜单项名称**：`[MenuItem("...")]` 的路径是 C# 特性参数，必须是**编译期常量**，而 Unity 在 2021.3 没有公开的"运行时注册 Tools 菜单"API，所以 6 个菜单项名称固定为中文。菜单**点开后的日志反馈**跟随语言，日志里引用菜单时用的也是真实的中文菜单名（翻译了反而照不到）。
-- **装了 Odin 时的资产 Tooltip**：`[Tooltip]` 同样是特性常量。没装 Odin 时由 `BindRulesEditor`（自定义 Inspector）画成多语言；装了 Odin 时 Odin 接管绘制，Tooltip 保持特性里的固定文案。
-
----
-
 ## 字段分组
 
 生成弹窗里勾上**字段分组**后，生成的字段会按**类型**重新排布：相同类型的字段连续放在一起，每组前面加一条 `[Header("短类型名")]`，在 Inspector 里就是一组一组的折叠标题。
